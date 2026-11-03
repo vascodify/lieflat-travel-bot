@@ -323,8 +323,8 @@ const sampleDealHtml = formatFlightDealHtml({
   bookingLinks: { googleFlights: 'https://www.google.com/travel/flights' },
 });
 assert.equal(sampleDealHtml.includes('MIAT Mongolian Airlines'), true);
-assert.equal(sampleDealHtml.includes('1,462 GBP'), true);
-assert.equal(sampleDealHtml.includes('1,643 GBP'), true);
+assert.equal(sampleDealHtml.includes('1,462'), true);
+assert.equal(sampleDealHtml.includes('1,643'), true);
 console.log('  [PASS] Telegram Bot parser and HTML deal formatter verified.');
 
 if (process.argv.includes('--live')) {

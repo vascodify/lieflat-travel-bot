@@ -16,6 +16,7 @@ export const SEAT_TYPE_CODES = {
   6: { label: 'True 180° Lie-Flat Individual Suite / Pod', isLieFlat: true, category: 'lie_flat_suite' },
   7: { label: 'Angled Flat Seat (Not 180° Flat)', isLieFlat: false, category: 'angled_flat' },
   8: { label: 'Recliner Seat (Regional / Domestic First)', isLieFlat: false, category: 'recliner' },
+  9: { label: 'True 180° Lie-Flat Seat', isLieFlat: true, category: 'lie_flat' },
 };
 
 export const WIDEBODY_FAMILIES = [
@@ -406,7 +407,7 @@ export function classifySegmentEquipment({
         isTrueLieFlat: true,
         family: wb.family,
         aircraft,
-        seatLabel: seatInfo.label,
+        seatLabel: seatInfo.isLieFlat ? seatInfo.label : 'True 180° Lie-Flat Seat',
         productNotes: wb.notes,
       };
     }

@@ -62,6 +62,22 @@ const AIRLINE_METADATA = {
   'air europa': { fullName: 'Air Europa', tokens: ['air europa', 'air-europa', 'aireuropa'] },
   azul: { fullName: 'Azul Brazilian Airlines', tokens: ['azul'] },
   'royal air maroc': { fullName: 'Royal Air Maroc', tokens: ['royal air maroc', 'royal-air-maroc'] },
+  'plus ultra': { fullName: 'Plus Ultra Líneas Aéreas', tokens: ['plus ultra', 'plus-ultra', 'plusultra'] },
+  'plus ultra líneas aéreas': { fullName: 'Plus Ultra Líneas Aéreas', tokens: ['plus ultra', 'plus-ultra', 'plusultra'] },
+  'aerolineas argentinas': { fullName: 'Aerolíneas Argentinas', tokens: ['aerolineas', 'argentinas'] },
+  'aerolíneas argentinas': { fullName: 'Aerolíneas Argentinas', tokens: ['aerolineas', 'argentinas'] },
+  thai: { fullName: 'Thai Airways', tokens: ['thai', 'thai airways', 'royal silk'] },
+  'thai airways': { fullName: 'Thai Airways', tokens: ['thai', 'thai airways', 'royal silk'] },
+  miat: { fullName: 'MIAT Mongolian Airlines', tokens: ['miat', 'mongolian'] },
+  'miat mongolian airlines': { fullName: 'MIAT Mongolian Airlines', tokens: ['miat', 'mongolian'] },
+  condor: { fullName: 'Condor', tokens: ['condor'] },
+  gol: { fullName: 'GOL Linhas Aéreas', tokens: ['gol'] },
+  asiana: { fullName: 'Asiana Airlines', tokens: ['asiana'] },
+  'asiana airlines': { fullName: 'Asiana Airlines', tokens: ['asiana'] },
+  'korean air': { fullName: 'Korean Air', tokens: ['korean air', 'korean'] },
+  'air astana': { fullName: 'Air Astana', tokens: ['air astana'] },
+  'gulf air': { fullName: 'Gulf Air', tokens: ['gulf air', 'falcon gold'] },
+  saudia: { fullName: 'Saudia', tokens: ['saudia'] },
 };
 
 const AIRCRAFT_FAMILY_TOKENS = [
@@ -173,9 +189,18 @@ function scoreAndFilterCandidates(cards, { airlineMeta, aircraftMeta, mode = 'up
     if (!murl && !turl) continue;
     if (/\.gif($|\?)|\.svg($|\?)/i.test(murl)) continue;
 
-    // Reject diagrams, seatmaps, exterior plane-spotting, economy class, lounges, food closeups, or destination beaches
+    // Reject diagrams, seatmaps, exterior plane-spotting, flight simulators, cockpits, economy class, lounges, or catering
     if (
-      /seat\s*map|seatmap|layout|diagram|livery|takeoff|landing|runway|airport\s*lounge|lounge\s*review|beach|island|resort|hotel|amenity\s*kit|menu|catering/i.test(
+      /seat\s*map|seatmap|layout|diagram|livery|takeoff|landing|runway|airport\s*lounge|lounge\s*review|beach|island|resort|hotel|amenity\s*kit|menu|catering|flightsim|msfs|x-plane|p3d|airfleets|planespotters|diecast|scale\s*model|add-on|addon|cockpit|flight\s*deck/i.test(
+        combinedText
+      )
+    ) {
+      continue;
+    }
+
+    // Must explicitly reference cabin, seat, suite, or interior
+    if (
+      !/\b(cabin|seat|seats|suite|suites|interior|flatbed|flat[\s-]*bed|lie[\s-]*flat|business[\s-]*class)\b/i.test(
         combinedText
       )
     ) {
@@ -304,20 +329,43 @@ export async function fetchCabinAndBedPhotos({
   });
 
   // Strictly evaluate bed candidates ONLY from the bed queries first so upright cabin photos do not dilute bed results
-  const bedCandidates = scoreAndFilterCandidates([...bedCards1, ...bedCards2], {
+  let bedCandidates = scoreAndFilterCandidates([...bedCards1, ...bedCards2], {
     airlineMeta,
     aircraftMeta,
     mode: 'bed',
   });
 
   // Prefer bed candidates that explicitly mention bed/flat/sleep/mattress/recline in title or filename
-  const explicitBedCandidates = bedCandidates.filter((c) => c.hasBedKeywords);
+  let explicitBedCandidates = bedCandidates.filter((c) => c.hasBedKeywords);
 
-  const uprightPick = uprightCandidates[0] || null;
+  // If no explicit bed photo found yet, run targeted high-intent lie-flat bed queries
+  if (explicitBedCandidates.length === 0) {
+    const extraBedCards = await fetchBingImageCards(`"${airlineMeta.fullName}" "flat bed" business class`);
+    const extraCandidates = scoreAndFilterCandidates(extraBedCards, {
+      airlineMeta,
+      aircraftMeta,
+      mode: 'bed',
+    });
+    explicitBedCandidates = extraCandidates.filter((c) => c.hasBedKeywords);
+    bedCandidates.push(...extraCandidates);
+  }
+
+  // If no upright photo found yet, run targeted upright seat query
+  if (uprightCandidates.length === 0) {
+    const extraUprightCards = await fetchBingImageCards(`"${airlineMeta.fullName}" business class seat upright`);
+    const extraCandidates = scoreAndFilterCandidates(extraUprightCards, {
+      airlineMeta,
+      aircraftMeta,
+      mode: 'upright',
+    });
+    uprightCandidates.push(...extraCandidates);
+  }
+
+  const uprightPick = uprightCandidates.find((c) => !c.hasBedKeywords) || uprightCandidates[0] || null;
   const bedPick =
     explicitBedCandidates.find((c) => c.imageId !== uprightPick?.imageId) ||
+    bedCandidates.find((c) => c.hasBedKeywords && c.imageId !== uprightPick?.imageId) ||
     bedCandidates.find((c) => c.imageId !== uprightPick?.imageId) ||
-    uprightCandidates.find((c) => c.imageId !== uprightPick?.imageId) ||
     null;
 
   const cabinGoogleUrl = `https://www.google.com/search?tbm=isch&q=${encodeURIComponent(cabinQuery)}`;

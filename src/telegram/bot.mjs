@@ -4,9 +4,35 @@
  */
 
 import http from 'node:http';
-import { parseUserQueryWithGemini } from './gemini_parser.mjs';
+import fs from 'node:fs';
+import path from 'node:path';
+import { parseUserQueryWithGemini, parseAudioWithGemini } from './gemini_parser.mjs';
 import { formatFlightDealHtml, formatSearchSummaryHtml } from './formatter.mjs';
 import { orchestrateLieFlatSearch } from '../engine/search_orchestrator.mjs';
+
+// Auto-load .env file if present
+function loadEnvFile() {
+  const envPath = path.resolve(process.cwd(), '.env');
+  if (fs.existsSync(envPath)) {
+    const lines = fs.readFileSync(envPath, 'utf8').split('\n');
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const eqIdx = trimmed.indexOf('=');
+      if (eqIdx !== -1) {
+        const key = trimmed.slice(0, eqIdx).trim();
+        let val = trimmed.slice(eqIdx + 1).trim();
+        if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+          val = val.slice(1, -1);
+        }
+        if (!process.env[key]) {
+          process.env[key] = val;
+        }
+      }
+    }
+  }
+}
+loadEnvFile();
 
 const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const PORT = process.env.PORT || 3000;
@@ -37,13 +63,32 @@ async function tgCall(method, payload = {}) {
 }
 
 async function sendMessage(chatId, text, options = {}) {
-  return tgCall('sendMessage', {
-    chat_id: chatId,
-    text,
-    parse_mode: 'HTML',
-    disable_web_page_preview: options.disablePreview ?? false,
-    ...options,
-  });
+  try {
+    return await tgCall('sendMessage', {
+      chat_id: chatId,
+      text,
+      parse_mode: 'HTML',
+      disable_web_page_preview: options.disablePreview ?? true,
+      ...options,
+    });
+  } catch (err) {
+    if (String(err.message).toLowerCase().includes('too long') && text.includes('\n🇬🇧 ')) {
+      const [part1, part2] = text.split('\n🇬🇧 ');
+      await tgCall('sendMessage', {
+        chat_id: chatId,
+        text: part1,
+        parse_mode: 'HTML',
+        disable_web_page_preview: true,
+      });
+      return await tgCall('sendMessage', {
+        chat_id: chatId,
+        text: `🇬🇧 ${part2}`,
+        parse_mode: 'HTML',
+        disable_web_page_preview: true,
+      });
+    }
+    throw err;
+  }
 }
 
 async function sendChatAction(chatId, action = 'typing') {
@@ -54,31 +99,103 @@ async function sendChatAction(chatId, action = 'typing') {
   }
 }
 
-async function sendPhotos(chatId, { uprightUrl, bedUrl, title }) {
-  const media = [];
+async function getTelegramFileBuffer(fileId) {
+  const fileInfo = await tgCall('getFile', { file_id: fileId });
+  const filePath = fileInfo.file_path;
+  const downloadUrl = `https://api.telegram.org/file/bot${TELEGRAM_TOKEN}/${filePath}`;
+  const resp = await fetch(downloadUrl);
+  if (!resp.ok) throw new Error(`Failed to download audio file: ${resp.status}`);
+  return Buffer.from(await resp.arrayBuffer());
+}
+
+async function fetchImageAsBlob(url) {
+  if (!url) return null;
+  try {
+    const resp = await fetch(url, {
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        Accept: 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
+      },
+    });
+    if (!resp.ok) return null;
+    const arrayBuffer = await resp.arrayBuffer();
+    if (!arrayBuffer || arrayBuffer.byteLength < 1000) return null;
+    const contentType = resp.headers.get('content-type') || 'image/jpeg';
+    return new Blob([arrayBuffer], { type: contentType });
+  } catch (_) {
+    return null;
+  }
+}
+
+async function sendPhotos(chatId, { uprightUrl, uprightFallbackUrl, bedUrl, bedFallbackUrl, title }) {
+  // Download image blobs directly so Telegram never fails on CDN hotlink blocks or proxy query strings
+  const uprightBlob = (await fetchImageAsBlob(uprightUrl)) || (await fetchImageAsBlob(uprightFallbackUrl));
+  const bedBlob = (await fetchImageAsBlob(bedUrl)) || (await fetchImageAsBlob(bedFallbackUrl));
+
+  if (uprightBlob || bedBlob) {
+    try {
+      const form = new FormData();
+      form.append('chat_id', String(chatId));
+      const media = [];
+
+      if (uprightBlob) {
+        form.append('upright_photo', uprightBlob, 'upright_seat.jpg');
+        media.push({
+          type: 'photo',
+          media: 'attach://upright_photo',
+          caption: `💺 <b>${title} — Upright Seat Position</b>`,
+          parse_mode: 'HTML',
+        });
+      }
+      if (bedBlob) {
+        form.append('bed_photo', bedBlob, 'lieflat_bed.jpg');
+        media.push({
+          type: 'photo',
+          media: 'attach://bed_photo',
+          caption: `🛏 <b>${title} — 180° Lie-Flat Bed Position</b>`,
+          parse_mode: 'HTML',
+        });
+      }
+
+      form.append('media', JSON.stringify(media));
+      const resp = await fetch(`${TELEGRAM_API_BASE}/sendMediaGroup`, {
+        method: 'POST',
+        body: form,
+      });
+      const data = await resp.json();
+      if (data.ok) return true;
+      console.warn('[Bot Warning] Multipart sendMediaGroup returned error:', data.description);
+    } catch (err) {
+      console.warn('[Bot Warning] Multipart sendMediaGroup failed, trying direct URL fallback:', err.message);
+    }
+  }
+
+  // Fallback: URL-based sendMediaGroup
+  const urlMedia = [];
   if (uprightUrl) {
-    media.push({
+    urlMedia.push({
       type: 'photo',
       media: uprightUrl,
-      caption: `💺 <b>${title} — Upright Seat</b>`,
+      caption: `💺 <b>${title} — Upright Seat Position</b>`,
       parse_mode: 'HTML',
     });
   }
   if (bedUrl) {
-    media.push({
+    urlMedia.push({
       type: 'photo',
       media: bedUrl,
-      caption: `🛏 <b>${title} — 180° Lie-Flat Bed</b>`,
+      caption: `🛏 <b>${title} — 180° Lie-Flat Bed Position</b>`,
       parse_mode: 'HTML',
     });
   }
 
-  if (media.length > 0) {
+  if (urlMedia.length > 0) {
     try {
-      await tgCall('sendMediaGroup', { chat_id: chatId, media });
+      await tgCall('sendMediaGroup', { chat_id: chatId, media: urlMedia });
       return true;
     } catch (err) {
-      console.warn('[Bot Warning] Could not send photo media group directly (might be hotlink protected):', err.message);
+      console.warn('[Bot Warning] Could not send URL photo media group:', err.message);
     }
   }
   return false;
@@ -86,9 +203,11 @@ async function sendPhotos(chatId, { uprightUrl, bedUrl, title }) {
 
 // Check whitelist authorization
 function isUserAuthorized(from) {
-  if (ALLOWED_USERS.length === 0) return true; // Open if no whitelist specified
+  if (ALLOWED_USERS.length === 0) return true;
+  if (ALLOWED_USERS.includes('*') || ALLOWED_USERS.includes('all')) return true;
   const username = (from?.username || '').toLowerCase();
-  return ALLOWED_USERS.includes(username);
+  const userId = String(from?.id || '');
+  return ALLOWED_USERS.includes(username) || ALLOWED_USERS.includes(userId);
 }
 
 // Main message dispatcher
@@ -96,99 +215,170 @@ async function handleTelegramMessage(message) {
   const chatId = message.chat?.id;
   const text = (message.text || '').trim();
   const from = message.from || {};
+  const voice = message.voice || message.audio;
 
-  if (!chatId || !text) return;
+  if (!chatId || (!text && !voice)) return;
 
   if (!isUserAuthorized(from)) {
-    await sendMessage(chatId, '⛔ <b>Unauthorized</b>: This bot is configured for private use. Ask the administrator to add your @username.');
+    const userHandle = from?.username ? `@${from.username}` : `User ID: ${from?.id}`;
+    console.log(`[Bot Auth Blocked] Unauthorized message from ${userHandle}`);
+    await sendMessage(
+      chatId,
+      `⛔ <b>Private Bot</b>\n\nYour account is <code>${userHandle}</code>.\nTo authorize yourself, add this username to <code>ALLOWED_USERNAMES</code> in your <code>.env</code> file (or leave it blank to allow yourself).`
+    );
+    return;
+  }
+
+  // Handle voice / audio note input
+  if (voice) {
+    await sendChatAction(chatId, 'record_voice');
+    await sendMessage(chatId, '🎙️ <i>Listening and transcribing your voice note with Gemini...</i>');
+    try {
+      const audioBuffer = await getTelegramFileBuffer(voice.file_id);
+      const mime = voice.mime_type || 'audio/ogg';
+      const params = await parseAudioWithGemini(audioBuffer, mime);
+
+      let speechHeader = `🗣️ <b>Heard:</b> <i>"${params.transcription || params.summary}"</i>\n`;
+      speechHeader += `🎯 <b>Extracted Search:</b> ${params.summary}`;
+      await sendMessage(chatId, speechHeader);
+
+      await executeSearchAndReply(chatId, params);
+    } catch (err) {
+      console.error('[Bot Error] Voice processing failed:', err);
+      await sendMessage(
+        chatId,
+        `⚠️ <b>Could not process voice note:</b>\n<code>${err.message}</code>\n\n💡 <i>Try sending as a text message.</i>`
+      );
+    }
     return;
   }
 
   if (text === '/start' || text === '/help') {
     const helpMsg = `👋 <b>Welcome to Lie-Flat Flight Hunter!</b>
 
-I hunt down <b>true 180° lie-flat Business Class</b> flight deals under <b>£1,700 GBP</b> departing low-APD European hubs, calculate <b>LHR positioning flights</b> (with ≥2.5h buffers), verify aircraft cabins, and generate pre-selected direct booking links.
+I hunt down <b>true 180° lie-flat Business Class</b> flight deals departing low-APD European hubs, calculate <b>2–3 LHR positioning options</b> (with ≥2.5h buffers & Economy booking links), verify upright & flat-bed aircraft photos, and generate pre-selected direct booking links.
 
 <b>How to search:</b>
-Just send me a message like:
-• <code>Seoul for 3 nights in Dec</code>
-• <code>Tokyo 4 nights under £1600</code>
-• <code>Rio de Janeiro 4 nights next month</code>
-• <code>Bangkok 5 nights</code>
-
-Or use command format:
-<code>/search ICN 3 nights Dec 1600</code>
+• <b>Send a voice note:</b> Hold the mic and say: <i>"Find me flights to Seoul for 3 nights in December"</i>
+• <b>Or type a text message:</b>
+  • <code>Seoul for 3 nights in Dec</code>
+  • <code>Tokyo 4 nights in the next 3 months</code>
+  • <code>Buenos Aires 4 nights in the next 6 months</code>
+  • <code>Rio de Janeiro 4 nights next month</code>
 
 <i>Strict safety: Air India, IndiGo, Icelandair, and EgyptAir are unconditionally excluded.</i>`;
     await sendMessage(chatId, helpMsg);
     return;
   }
 
-  // Handle search query
+  // Handle text search query
   const cleanQuery = text.replace(/^\/search\s*/i, '');
   if (!cleanQuery) {
-    await sendMessage(chatId, 'Please specify where and when you would like to fly! E.g. <code>Seoul for 3 nights in Dec</code>');
+    await sendMessage(
+      chatId,
+      'Please specify where and when you would like to fly! E.g. <code>Seoul for 3 nights in Dec</code> or send a voice note 🎙️'
+    );
     return;
   }
 
   await sendChatAction(chatId, 'typing');
-  const ack = await sendMessage(
+  const params = await parseUserQueryWithGemini(cleanQuery);
+  console.log('[Bot Search] Parsed query:', params);
+
+  await sendMessage(
     chatId,
-    `🔍 <b>Searching for lie-flat deals...</b>\nQuery: <i>"${cleanQuery}"</i>\nScanning low-APD hubs & return flights. This takes ~20–30s.`
+    `🔍 <b>Searching for lie-flat deals...</b>\n• <b>Target:</b> <code>${params.summary}</code>\nScanning European hubs, return legs, cabin photos & LHR positioning flights (~20–35s).`
   );
 
   try {
-    const params = await parseUserQueryWithGemini(cleanQuery);
-    console.log('[Bot Search] Parsed query:', params);
-
-    const searchResult = await orchestrateLieFlatSearch({
-      destinations: [params.destination],
-      nights: params.nights || 4,
-      targetMonth: params.targetMonth || null,
-      maxPriceGbp: params.maxPriceGbp || 1700,
-      preferLowApd: true,
-      maxOriginHubs: 5,
-      maxDatePairs: 2,
-      includeLhrPositioning: true,
-      includeCabinPhotos: true,
-    });
-
-    const matches = searchResult.matches || [];
-
-    if (matches.length === 0) {
-      await sendMessage(
-        chatId,
-        `❌ <b>No verified lie-flat flights found</b> under £${params.maxPriceGbp} GBP for <code>${params.destination}</code> (${params.nights} nights).\n\n💡 <i>Try increasing your budget ceiling (e.g. £1,800) or trying another month!</i>`
-      );
-      return;
-    }
-
-    // Send summary
-    const summaryHtml = formatSearchSummaryHtml(searchResult.searchSummary);
-    await sendMessage(chatId, summaryHtml);
-
-    // Send up to top 3 matches
-    for (let i = 0; i < Math.min(3, matches.length); i++) {
-      const match = matches[i];
-      const dealHtml = formatFlightDealHtml(match, i + 1);
-
-      // Attempt to send photos first
-      const uprightUrl = match.cabinPhotos?.uprightSeatPhoto?.imageUrl || match.cabinPhotos?.uprightSeatPhoto?.originalImageUrl;
-      const bedUrl = match.cabinPhotos?.flatBedPhoto?.imageUrl || match.cabinPhotos?.flatBedPhoto?.originalImageUrl;
-
-      if (uprightUrl || bedUrl) {
-        await sendPhotos(chatId, {
-          uprightUrl,
-          bedUrl,
-          title: `${match.airline} ${match.aircraft}`,
-        });
-      }
-
-      await sendMessage(chatId, dealHtml, { disablePreview: true });
-    }
+    await executeSearchAndReply(chatId, params);
   } catch (err) {
     console.error('[Bot Error] Search failed:', err);
-    await sendMessage(chatId, `⚠️ <b>Search encountered an error:</b>\n<code>${err.message}</code>\nPlease try again in a minute.`);
+    await sendMessage(
+      chatId,
+      `⚠️ <b>Search encountered an error:</b>\n<code>${err.message}</code>\nPlease try again in a minute.`
+    );
+  }
+}
+
+async function executeSearchAndReply(chatId, params) {
+  await sendChatAction(chatId, 'typing');
+
+  // Select top hubs based on target geography
+  const latamDestinations = ['GIG', 'GRU', 'EZE', 'BOG', 'LIM', 'SCL', 'MEX', 'CUN'];
+  let searchOrigins = ['OSL', 'ARN', 'FRA', 'MUC', 'MXP', 'MAD', 'LIS', 'DUB', 'VIE'];
+  if (latamDestinations.includes(params.destination)) {
+    searchOrigins = ['MAD', 'LIS', 'BCN', 'MXP', 'FCO', 'FRA', 'CDG'];
+  }
+
+  const budgetCeiling = params.maxPriceGbp || 2400;
+  const monthsWindow = params.monthsAhead || 2;
+  const maxDatePairs = monthsWindow > 2 ? Math.min(monthsWindow + 1, 5) : 3;
+
+  const searchResult = await orchestrateLieFlatSearch({
+    origins: searchOrigins,
+    destinations: [params.destination],
+    nights: params.nights || 4,
+    monthsAhead: monthsWindow,
+    targetMonth: params.targetMonth || null,
+    maxPriceGbp: budgetCeiling,
+    maxDatePairs,
+    includeLhrPositioning: true,
+    includeCabinPhotos: true,
+  });
+
+  const matches = searchResult.matches || [];
+
+  if (matches.length === 0) {
+    let msg = `❌ <b>No verified lie-flat flights found</b> under <b>£${budgetCeiling} GBP</b> for <code>${params.destination}</code> (${params.nights} nights`;
+    if (params.targetMonth) msg += ` in ${params.targetMonth}`;
+    else msg += ` over the next ${monthsWindow} months`;
+    msg += `).\n\n💡 <i>Try widening your month window (e.g. "in the next 6 months") or raising your budget ceiling!</i>`;
+    await sendMessage(chatId, msg);
+    return;
+  }
+
+  // Send summary
+  const summaryHtml = formatSearchSummaryHtml(searchResult.searchSummary);
+  await sendMessage(chatId, summaryHtml);
+
+  // Send up to top 3 matches
+  for (let i = 0; i < Math.min(3, matches.length); i++) {
+    const match = matches[i];
+    const dealHtml = formatFlightDealHtml(match, i + 1);
+
+    // Extract both cabinPhoto (upright) and bedPhoto (flat bed) from cabin_photos.mjs
+    const cabinObj = match.cabinPhotos?.cabinPhoto || match.cabinPhotos?.uprightSeatPhoto || {};
+    const bedObj = match.cabinPhotos?.bedPhoto || match.cabinPhotos?.flatBedPhoto || {};
+
+    const uprightUrl = cabinObj.imageUrl || cabinObj.originalImageUrl;
+    const uprightFallbackUrl = cabinObj.originalImageUrl || cabinObj.imageUrl;
+    const bedUrl = bedObj.imageUrl || bedObj.originalImageUrl;
+    const bedFallbackUrl = bedObj.originalImageUrl || bedObj.imageUrl;
+
+    const airlineName =
+      match.cabinPhotos?.airlineNormalized ||
+      (Array.isArray(match.primaryCarriers) ? match.primaryCarriers.join(' / ') : '') ||
+      match.airline ||
+      'Business Class';
+    const aircraftName =
+      match.cabinPhotos?.aircraftNormalized ||
+      match.outbound?.qualifyingLongLegs?.[0]?.aircraft ||
+      match.aircraft ||
+      'Lie-Flat Widebody';
+
+    if (uprightUrl || bedUrl) {
+      await sendChatAction(chatId, 'upload_photo');
+      await sendPhotos(chatId, {
+        uprightUrl,
+        uprightFallbackUrl,
+        bedUrl,
+        bedFallbackUrl,
+        title: `${airlineName} — ${aircraftName}`,
+      });
+    }
+
+    await sendMessage(chatId, dealHtml, { disablePreview: true });
   }
 }
 
@@ -197,7 +387,6 @@ async function startTelegramPolling() {
   let offset = 0;
   console.log('[Bot Polling] Starting Telegram long polling loop...');
 
-  // Get bot username for info
   try {
     const me = await tgCall('getMe');
     console.log(`[Bot Polling] Connected as @${me.username} (${me.first_name})`);

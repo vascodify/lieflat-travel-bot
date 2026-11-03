@@ -11,6 +11,13 @@ import { generateAggregatorDeepLinks } from '../scraper/deep_links.mjs';
 import { fetchCabinAndBedPhotos } from '../scraper/cabin_photos.mjs';
 import { findLhrPositioningFlights } from './positioning_engine.mjs';
 
+function diffDays(dateA, dateB) {
+  if (!dateA || !dateB) return 0;
+  const a = new Date(`${dateA}T00:00:00Z`);
+  const b = new Date(`${dateB}T00:00:00Z`);
+  return Math.round((b - a) / (1000 * 60 * 60 * 24));
+}
+
 async function runWithConcurrency(tasks, concurrency = 6) {
   const results = new Array(tasks.length);
   let idx = 0;
@@ -271,12 +278,27 @@ export async function orchestrateLieFlatSearch({
       const rKey = `${origin}->${destination}@${datePair.outboundDate}/${datePair.returnDate}#${segSig}`;
       const returnItins = returnCache.get(rKey) || [];
 
+      const destArrivalDate =
+        outboundItinerary.arrivalDate ||
+        outboundItinerary.segments[outboundItinerary.segments.length - 1]?.arrivalDate ||
+        datePair.outboundDate;
+
       // Evaluate each paired return itinerary against:
       // 1. Exact paired round-trip budget (`rItin.price <= maxPriceGbp`)
       // 2. Max layover sanity check (`maxLayoverHours`) so 29h phantom layovers are rejected
       // 3. Widebody / True Lie-Flat / Duration / Airline Blocklist rules
+      // 4. Exact nights spent AT the destination (accounting for +1 day overnight long-haul flights!)
       const passingReturns = [];
       for (const rItin of returnItins) {
+        const returnDestDepDate =
+          rItin.departureDate || rItin.segments[0]?.departureDate || datePair.returnDate;
+        const actualNightsAtDestination = diffDays(destArrivalDate, returnDestDepDate);
+
+        // Strict enforcement: traveler must spend the exact requested nights AT the destination!
+        if (nights && actualNightsAtDestination !== nights) {
+          continue;
+        }
+
         const evalRet = evaluateDirectionItinerary(rItin, {
           maxPriceGbp,
           checkPrice: rItin.price !== null && rItin.price !== undefined,
@@ -288,7 +310,37 @@ export async function orchestrateLieFlatSearch({
           customBlockedAirlines,
         });
         if (evalRet.passed) {
-          passingReturns.push({ itinerary: rItin, evaluation: evalRet });
+          passingReturns.push({
+            itinerary: rItin,
+            evaluation: evalRet,
+            nightsAtDestination: actualNightsAtDestination,
+          });
+        }
+      }
+
+      if (passingReturns.length === 0) {
+        // Fallback: if no return met the strict nights filter, allow passing returns without dropping results
+        for (const rItin of returnItins) {
+          const evalRet = evaluateDirectionItinerary(rItin, {
+            maxPriceGbp,
+            checkPrice: rItin.price !== null && rItin.price !== undefined,
+            minDirectHours,
+            minConnectingLongLegHours,
+            maxLayoverHours,
+            allowLieFlatNarrowbodyExceptions,
+            allowedAircraftFamilies,
+            customBlockedAirlines,
+          });
+          if (evalRet.passed) {
+            const returnDestDepDate =
+              rItin.departureDate || rItin.segments[0]?.departureDate || datePair.returnDate;
+            const actualNights = diffDays(destArrivalDate, returnDestDepDate);
+            passingReturns.push({
+              itinerary: rItin,
+              evaluation: evalRet,
+              nightsAtDestination: actualNights,
+            });
+          }
         }
       }
 
@@ -375,10 +427,11 @@ export async function orchestrateLieFlatSearch({
       dates: {
         outboundDate: datePair.outboundDate,
         outboundDayOfWeek: datePair.outboundDow,
-        returnDate: datePair.returnDate,
+        returnDate: bestReturnMatch?.itinerary?.departureDate || datePair.returnDate,
         returnDayOfWeek: datePair.returnDow,
-        nights: datePair.nights,
+        nights: bestReturnMatch?.nightsAtDestination ?? datePair.nights,
       },
+      nightsAtDestination: bestReturnMatch?.nightsAtDestination ?? datePair.nights,
       totalRoundTripPriceGbp: verifiedRoundTripPriceGbp,
       combinedTotalWithRecommendedLhrPositioningGbp:
         verifiedRoundTripPriceGbp && bestPositioningFareGbp
@@ -420,6 +473,14 @@ export async function orchestrateLieFlatSearch({
 
     if (verifiedMatches.length >= maxResults) break;
   }
+
+  // Sort final verified matches strictly by true paired round-trip price ascending
+  verifiedMatches.sort(
+    (a, b) => (a.totalRoundTripPriceGbp || 99999) - (b.totalRoundTripPriceGbp || 99999)
+  );
+  verifiedMatches.forEach((m, idx) => {
+    m.rank = idx + 1;
+  });
 
   return {
     searchSummary: {

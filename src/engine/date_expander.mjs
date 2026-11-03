@@ -128,30 +128,48 @@ export function expandDatePairs({
   while (iter <= endWindow) {
     if (iter.getUTCDay() === depDow) {
       if (!monthFilter || iter.getUTCMonth() + 1 === monthFilter) {
-        const retDateObj = new Date(iter.getTime() + tripNights * 24 * 60 * 60 * 1000);
-        allCandidates.push({
-          outboundDate: toIsoDate(iter),
-          returnDate: toIsoDate(retDateObj),
-          outboundDow: DAY_INDEX_TO_SHORT[iter.getUTCDay()],
-          returnDow: DAY_INDEX_TO_SHORT[retDateObj.getUTCDay()],
-          nights: tripNights,
-        });
+        // Pair A: Same-day destination arrival (D -> D + tripNights)
+        const retSameDayObj = new Date(iter.getTime() + tripNights * 24 * 60 * 60 * 1000);
+        if (retDow === null || retSameDayObj.getUTCDay() === retDow) {
+          allCandidates.push({
+            outboundDate: toIsoDate(iter),
+            returnDate: toIsoDate(retSameDayObj),
+            outboundDow: DAY_INDEX_TO_SHORT[iter.getUTCDay()],
+            returnDow: DAY_INDEX_TO_SHORT[retSameDayObj.getUTCDay()],
+            nights: tripNights,
+            expectedArrivalDayOffset: 0,
+          });
+        }
+
+        // Pair B: Overnight destination arrival (D -> D + tripNights + 1)
+        // Essential for long-haul overnight flights to Asia, South America, and Africa so the traveler gets the exact requested nights AT the destination!
+        if (retDow === null) {
+          const retOvernightObj = new Date(iter.getTime() + (tripNights + 1) * 24 * 60 * 60 * 1000);
+          allCandidates.push({
+            outboundDate: toIsoDate(iter),
+            returnDate: toIsoDate(retOvernightObj),
+            outboundDow: DAY_INDEX_TO_SHORT[iter.getUTCDay()],
+            returnDow: DAY_INDEX_TO_SHORT[retOvernightObj.getUTCDay()],
+            nights: tripNights,
+            expectedArrivalDayOffset: 1,
+          });
+        }
       }
     }
     iter.setUTCDate(iter.getUTCDate() + 1);
   }
 
-  if (allCandidates.length <= maxDatePairs) {
+  if (allCandidates.length <= maxDatePairs * 2) {
     return allCandidates;
   }
 
-  // Evenly sample across the window so we cover early, middle, and late weeks in the 2-month window
+  // Evenly sample across the window
   const sampled = [];
-  const step = (allCandidates.length - 1) / Math.max(1, maxDatePairs - 1);
-  for (let i = 0; i < maxDatePairs; i++) {
+  const step = (allCandidates.length - 1) / Math.max(1, maxDatePairs * 2 - 1);
+  for (let i = 0; i < maxDatePairs * 2; i++) {
     const idx = Math.round(i * step);
     const item = allCandidates[idx];
-    if (item && !sampled.some((s) => s.outboundDate === item.outboundDate)) {
+    if (item && !sampled.some((s) => s.outboundDate === item.outboundDate && s.returnDate === item.returnDate)) {
       sampled.push(item);
     }
   }

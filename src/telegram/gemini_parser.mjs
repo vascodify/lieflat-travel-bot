@@ -1,13 +1,13 @@
 /**
  * Natural language search parser for the Telegram Travel Bot.
  * Translates user text queries into structured parameters for orchestrateLieFlatSearch.
- * Uses Google Gemini Flash REST API via native fetch with regex fallback.
+ * Uses Google Gemini Flash REST API via native fetch with robust regex/word-number fallback.
  */
 
 const KNOWN_AIRPORT_NAMES = {
   seoul: 'ICN',
   incheon: 'ICN',
-  tokyo: 'HND',
+  tokyo: 'TYO',
   haneda: 'HND',
   narita: 'NRT',
   rio: 'GIG',
@@ -20,12 +20,16 @@ const KNOWN_AIRPORT_NAMES = {
   'sao paulo': 'GRU',
   buenos: 'EZE',
   'buenos aires': 'EZE',
+  ezeiza: 'EZE',
   santiago: 'SCL',
   bogota: 'BOG',
+  lima: 'LIM',
   cancun: 'CUN',
+  'mexico city': 'MEX',
   'new york': 'JFK',
   nyc: 'JFK',
   jfk: 'JFK',
+  newark: 'EWR',
   miami: 'MIA',
   'los angeles': 'LAX',
   lax: 'LAX',
@@ -35,6 +39,10 @@ const KNOWN_AIRPORT_NAMES = {
   ord: 'ORD',
   boston: 'BOS',
   bos: 'BOS',
+  washington: 'IAD',
+  toronto: 'YYZ',
+  montreal: 'YUL',
+  vancouver: 'YVR',
   taipei: 'TPE',
   hong: 'HKG',
   'hong kong': 'HKG',
@@ -43,14 +51,36 @@ const KNOWN_AIRPORT_NAMES = {
   'kuala lumpur': 'KUL',
   bali: 'DPS',
   denpasar: 'DPS',
+  jakarta: 'CGK',
   phuket: 'HKT',
   manila: 'MNL',
+  shanghai: 'PVG',
+  beijing: 'PEK',
   johannesburg: 'JNB',
   'cape town': 'CPT',
   nairobi: 'NBO',
+  maldives: 'MLE',
+  male: 'MLE',
+  zanzibar: 'ZNZ',
   sydney: 'SYD',
   melbourne: 'MEL',
   auckland: 'AKL',
+};
+
+const NUMBER_WORDS = {
+  one: 1,
+  two: 2,
+  three: 3,
+  four: 4,
+  five: 5,
+  six: 6,
+  seven: 7,
+  eight: 8,
+  nine: 9,
+  ten: 10,
+  eleven: 11,
+  twelve: 12,
+  fourteen: 14,
 };
 
 const MONTH_NAMES = {
@@ -68,23 +98,36 @@ const MONTH_NAMES = {
   december: '12', dec: '12',
 };
 
-export async function parseUserQueryWithGemini(userText, { geminiApiKey = process.env.GEMINI_API_KEY, modelName = process.env.GEMINI_MODEL || 'gemini-2.5-flash' } = {}) {
+function parseNumberToken(token) {
+  if (!token) return null;
+  const clean = String(token).trim().toLowerCase();
+  if (/^\d+$/.test(clean)) return parseInt(clean, 10);
+  return NUMBER_WORDS[clean] ?? null;
+}
+
+export async function parseUserQueryWithGemini(
+  userText,
+  { geminiApiKey = process.env.GEMINI_API_KEY, modelName = process.env.GEMINI_MODEL || 'gemini-3.8-flash' } = {}
+) {
   const now = new Date();
   const currentYear = now.getFullYear();
   const currentMonth = now.getMonth() + 1;
 
-  if (geminiApiKey) {
+  // Always compute heuristic baseline so we never lose nights vs monthsAhead distinction
+  const heuristic = parseUserQueryHeuristic(userText, currentYear, currentMonth);
+
+  if (geminiApiKey && geminiApiKey.startsWith('AIza')) {
     try {
-      const prompt = `You are a flight search query parser. Extract flight search parameters from the user's message.
+      const prompt = `You are an expert flight search query parser. Extract flight search parameters from the user's message.
 Return ONLY valid JSON matching this exact schema:
 {
-  "destination": "3-letter IATA code, e.g. ICN, GIG, HND, BKK",
-  "nights": integer (e.g. 3, 4, default 4),
-  "targetMonth": "YYYY-MM" (e.g. "2026-12", null if unspecified),
+  "destination": "3-letter IATA code (use TYO for Tokyo, ICN for Seoul, BKK for Bangkok, EZE for Buenos Aires, GIG for Rio)",
+  "nights": integer (trip duration in nights, e.g. 3, 4; default 4. Do NOT confuse with 'next X months'),
+  "monthsAhead": integer (how many months ahead to search if user says 'in the next X months', e.g. 2, 4, 6; default 2),
+  "targetMonth": "YYYY-MM" (e.g. "2026-12" if a specific month name is requested, null if searching across next X months),
   "departureDayOfWeek": "Friday" | "Saturday" | "Thursday" | null,
-  "maxPriceGbp": number (default 1700),
+  "maxPriceGbp": number or null (only if user explicitly stated a price/budget cap like 'under 1600' or 'max 1700', otherwise null),
   "preferLowApd": true,
-  "maxOriginHubs": 5,
   "summary": "Brief 1-line plain English summary of what will be searched"
 }
 
@@ -111,8 +154,9 @@ User message: "${userText}"`;
           const parsed = JSON.parse(rawJsonText);
           if (parsed.destination && parsed.destination.length === 3) {
             parsed.destination = parsed.destination.toUpperCase();
-            parsed.nights = Number(parsed.nights) || 4;
-            parsed.maxPriceGbp = Number(parsed.maxPriceGbp) || 1700;
+            parsed.nights = Number(parsed.nights) || heuristic.nights || 4;
+            parsed.monthsAhead = Number(parsed.monthsAhead) || heuristic.monthsAhead || 2;
+            parsed.maxPriceGbp = parsed.maxPriceGbp ? Number(parsed.maxPriceGbp) : heuristic.maxPriceGbp;
             return parsed;
           }
         }
@@ -122,50 +166,166 @@ User message: "${userText}"`;
     }
   }
 
-  // Fallback heuristic parser
-  return parseUserQueryHeuristic(userText, currentYear, currentMonth);
+  return heuristic;
+}
+
+export async function parseAudioWithGemini(
+  audioBuffer,
+  mimeType = 'audio/ogg',
+  { geminiApiKey = process.env.GEMINI_API_KEY, modelName = process.env.GEMINI_MODEL || 'gemini-3.8-flash' } = {}
+) {
+  const now = new Date();
+  if (!geminiApiKey) {
+    throw new Error('GEMINI_API_KEY is missing in your .env file.');
+  }
+  if (!geminiApiKey.startsWith('AIza')) {
+    throw new Error(
+      'Your GEMINI_API_KEY in .env does not appear to be a valid Google AI Studio key (keys from aistudio.google.com start with "AIzaSy...").'
+    );
+  }
+
+  const base64Audio = Buffer.from(audioBuffer).toString('base64');
+  const prompt = `Listen carefully to this voice note and extract the flight search parameters.
+Return ONLY valid JSON matching this exact schema:
+{
+  "transcription": "Verbatim transcript of what the user said in the voice note",
+  "destination": "3-letter IATA code (use TYO for Tokyo, ICN for Seoul, BKK for Bangkok, EZE for Buenos Aires, GIG for Rio)",
+  "nights": integer (trip length in nights, e.g. 3, 4; default 4),
+  "monthsAhead": integer (search window in months if user says 'next X months', default 2),
+  "targetMonth": "YYYY-MM" (e.g. "2026-12", null if unspecified),
+  "departureDayOfWeek": "Friday" | "Saturday" | "Thursday" | null,
+  "maxPriceGbp": number or null (only if user explicitly stated a price like 'under 1600', otherwise null),
+  "summary": "Brief 1-line plain English summary of what will be searched"
+}
+
+Current date: ${now.toISOString().split('T')[0]}.`;
+
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${geminiApiKey}`;
+  const resp = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [
+        {
+          parts: [
+            {
+              inline_data: {
+                mime_type: mimeType,
+                data: base64Audio,
+              },
+            },
+            { text: prompt },
+          ],
+        },
+      ],
+      generationConfig: {
+        responseMimeType: 'application/json',
+        temperature: 0.1,
+      },
+    }),
+  });
+
+  if (!resp.ok) {
+    const errText = await resp.text();
+    throw new Error(`Gemini Audio API error (${resp.status}): ${errText}`);
+  }
+
+  const data = await resp.json();
+  const rawJsonText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!rawJsonText) {
+    throw new Error('Gemini did not return parsed audio contents.');
+  }
+
+  const parsed = JSON.parse(rawJsonText);
+  if (parsed.destination && parsed.destination.length === 3) {
+    parsed.destination = parsed.destination.toUpperCase();
+  } else {
+    parsed.destination = 'ICN';
+  }
+  parsed.nights = Number(parsed.nights) || 4;
+  parsed.monthsAhead = Number(parsed.monthsAhead) || 2;
+  parsed.maxPriceGbp = parsed.maxPriceGbp ? Number(parsed.maxPriceGbp) : 2400;
+  return parsed;
 }
 
 export function parseUserQueryHeuristic(userText, currentYear, currentMonth) {
   const text = String(userText).toLowerCase();
-  
+  const numberWordPattern = `(?:\\d+|${Object.keys(NUMBER_WORDS).join('|')})`;
+
   // 1. Destination
   let destination = null;
-  // Match 3-letter IATA uppercase in raw text
   const iataMatch = userText.match(/\b([A-Z]{3})\b/);
-  if (iataMatch && !['FOR', 'THE', 'AND', 'GBP', 'LHR', 'BOT'].includes(iataMatch[1])) {
+  if (iataMatch && !['FOR', 'THE', 'AND', 'GBP', 'LHR', 'BOT', 'ANY', 'ALL', 'NOT'].includes(iataMatch[1])) {
     destination = iataMatch[1];
   } else {
-    for (const [city, code] of Object.entries(KNOWN_AIRPORT_NAMES)) {
+    // Sort keys by length descending so "rio de janeiro" matches before "rio"
+    const sortedCities = Object.entries(KNOWN_AIRPORT_NAMES).sort((a, b) => b[0].length - a[0].length);
+    for (const [city, code] of sortedCities) {
       if (text.includes(city)) {
         destination = code;
         break;
       }
     }
   }
-  if (!destination) destination = 'ICN'; // sensible default
+  if (!destination) destination = 'ICN';
 
-  // 2. Nights
-  let nights = 4;
-  const nightsMatch = text.match(/(\d+)\s*(?:night|day)/i);
-  if (nightsMatch) {
-    nights = parseInt(nightsMatch[1], 10);
-  }
-
-  // 3. Price
-  let maxPriceGbp = 1700;
-  const priceMatch = text.match(/(?:£|\$|under|max|budget)?\s*(\d{3,4})(?:\s*gbp|\s*pounds)?/i);
-  if (priceMatch) {
-    const val = parseInt(priceMatch[1], 10);
-    if (val >= 800 && val <= 5000) {
-      maxPriceGbp = val;
+  // 2. Months Ahead window (e.g. "in the next 4 months", "next 6 months", "within 3 months")
+  let monthsAhead = 2;
+  let hasExplicitMonthsAhead = false;
+  const monthsAheadRegex = new RegExp(
+    `(?:next|within|over\\s+the\\s+next|in\\s+the\\s+next)\\s+(${numberWordPattern})\\s*months?\\b`,
+    'i'
+  );
+  const monthsAheadMatch = text.match(monthsAheadRegex);
+  if (monthsAheadMatch) {
+    const val = parseNumberToken(monthsAheadMatch[1]);
+    if (val && val >= 1 && val <= 12) {
+      monthsAhead = val;
+      hasExplicitMonthsAhead = true;
     }
   }
 
-  // 4. Target Month
+  // 3. Trip length in Nights (strictly match "nights" or "days", or "for X months in <Month>" typo)
+  let nights = 4;
+  const nightsRegex = new RegExp(`\\b(${numberWordPattern})\\s*(?:nights?|days?)\\b`, 'i');
+  const nightsMatch = text.match(nightsRegex);
+  if (nightsMatch) {
+    const val = parseNumberToken(nightsMatch[1]);
+    if (val && val >= 1 && val <= 30) {
+      nights = val;
+    }
+  } else if (!hasExplicitMonthsAhead) {
+    // Handle voice-to-text typo like "Buenos Aires for 4 months in December" -> 4 nights
+    const typoNightsMatch = text.match(new RegExp(`\\bfor\\s+(${numberWordPattern})\\s*months?\\s+in\\b`, 'i'));
+    if (typoNightsMatch) {
+      const val = parseNumberToken(typoNightsMatch[1]);
+      if (val && val >= 1 && val <= 14) {
+        nights = val;
+      }
+    }
+  }
+
+  // 4. Price / Budget ceiling (strip thousands commas first so "£1,500" -> "£1500")
+  const textNoCommas = text.replace(/(\d),(\d{3})\b/g, '$1$2');
+  let maxPriceGbp = 2400; // Flexible default so users see lowest available verified fares even in peak season
+  let explicitBudget = false;
+  const priceMatch =
+    textNoCommas.match(/(?:£|\$|under|max|below|budget|ceiling)\s*(?:£|\$)?\s*(\d{3,4})\b/i) ||
+    textNoCommas.match(/\b(\d{3,4})\s*(?:gbp|pounds)\b/i) ||
+    textNoCommas.match(/\b(1\d{3}|[89]\d{2}|2[1-9]\d{2}|[34]\d{3})\b/);
+  if (priceMatch) {
+    const val = parseInt(priceMatch[1], 10);
+    if (val >= 800 && val <= 5000 && (val < 2024 || val > 2035)) {
+      maxPriceGbp = val;
+      explicitBudget = true;
+    }
+  }
+
+  // 5. Target Month (only if user named a specific month like "December" or "Jan")
   let targetMonth = null;
   for (const [mName, mNum] of Object.entries(MONTH_NAMES)) {
-    if (text.includes(mName)) {
+    const mRegex = new RegExp(`\\b${mName}\\b`, 'i');
+    if (mRegex.test(text)) {
       const year = parseInt(mNum, 10) < currentMonth ? currentYear + 1 : currentYear;
       targetMonth = `${year}-${mNum}`;
       break;
@@ -175,12 +335,15 @@ export function parseUserQueryHeuristic(userText, currentYear, currentMonth) {
   return {
     destination,
     nights,
+    monthsAhead,
     targetMonth,
     departureDayOfWeek: 'Friday',
-    returnDayOfWeek: 'Tuesday',
+    returnDayOfWeek: null,
     maxPriceGbp,
+    explicitBudget,
     preferLowApd: true,
-    maxOriginHubs: 5,
-    summary: `Lie-flat to ${destination} for ${nights} nights (max £${maxPriceGbp} GBP)`,
+    summary: `Lie-flat to ${destination} for ${nights} nights${
+      targetMonth ? ` in ${targetMonth}` : ` (next ${monthsAhead} months)`
+    }${explicitBudget ? ` [max £${maxPriceGbp} GBP]` : ''}`,
   };
 }
