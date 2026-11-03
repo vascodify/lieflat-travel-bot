@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: lieflat-flight-bot
+    runtime: node
+    plan: free
+    buildCommand: ""
+    startCommand: node src/telegram/bot.mjs
+    envVars:
+      - key: NODE_VERSION
+        value: 22.12.0
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: ALLOWED_USERNAMES
+        sync: false

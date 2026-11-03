@@ -1,0 +1,19 @@
+{
+  "name": "lieflat-travel-mcp",
+  "version": "1.0.0",
+  "description": "MCP Server for discovering long-haul true lie-flat Business Class flights filtered by widebody aircraft, lie-flat narrowbody exceptions (JetBlue Mint, TAP A321LR, etc.), leg duration rules, APD tax tiers, and airline blocklists with OTA deep links.",
+  "type": "module",
+  "main": "src/index.mjs",
+  "bin": {
+    "lieflat-travel-mcp": "./bin/run-mcp.sh"
+  },
+  "scripts": {
+    "start": "node src/telegram/bot.mjs",
+    "bot": "node src/telegram/bot.mjs",
+    "mcp": "./bin/run-mcp.sh",
+    "test": "./bin/run-node.sh test/verify_all.mjs"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+  "license": "MIT"
+}
