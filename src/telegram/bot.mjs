@@ -329,7 +329,7 @@ async function executeSearchAndReply(chatId, params) {
 
   const budgetCeiling = params.maxPriceGbp || 2400;
   const monthsWindow = params.monthsAhead || 2;
-  const maxDatePairs = monthsWindow > 2 ? Math.min(monthsWindow + 1, 5) : 3;
+  const maxDatePairs = params.targetMonth ? 8 : (monthsWindow > 2 ? Math.min(monthsWindow + 2, 7) : 5);
 
   const searchResult = await orchestrateLieFlatSearch({
     origins: searchOrigins,
@@ -342,6 +342,7 @@ async function executeSearchAndReply(chatId, params) {
     maxPriceGbp: budgetCeiling,
     maxDatePairs,
     minConnectingLongLegHours: 6.5,
+    concurrency: 8,
     includeLhrPositioning: true,
     includeCabinPhotos: true,
   });

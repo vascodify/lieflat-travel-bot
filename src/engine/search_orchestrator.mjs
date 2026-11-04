@@ -84,7 +84,7 @@ export async function orchestrateLieFlatSearch({
   includeLhrPositioning = true,
   homeAirport = 'LHR',
   minPositioningBufferHours = 2.5,
-  concurrency = 6,
+  concurrency = 8,
   maxResults = 15,
 } = {}) {
   const selectedOrigins = resolveOriginHubs({

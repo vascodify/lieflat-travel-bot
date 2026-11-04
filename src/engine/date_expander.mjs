@@ -85,8 +85,9 @@ export function expandDatePairs({
   );
 
   const explicitDepDow = parseDayOfWeek(departureDayOfWeek);
-  // When no explicit day is requested, scan both Tuesdays (saver weekday fares) and Fridays (weekend departures)
-  const targetDays = explicitDepDow !== null ? [explicitDepDow] : [2, 5];
+  // When no explicit day is requested, scan across ALL 7 days of the week (Sunday through Saturday)
+  // so no bargain is missed regardless of which day of the week it departs.
+  const targetDays = explicitDepDow !== null ? [explicitDepDow] : [0, 1, 2, 3, 4, 5, 6];
   const retDow = parseDayOfWeek(returnDayOfWeek);
 
   // Compute trip length in nights:
