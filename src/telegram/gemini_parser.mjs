@@ -26,8 +26,10 @@ const KNOWN_AIRPORT_NAMES = {
   lima: 'LIM',
   cancun: 'CUN',
   'mexico city': 'MEX',
-  'new york': 'JFK',
-  nyc: 'JFK',
+  'new york': 'NYC',
+  'new york city': 'NYC',
+  nyc: 'NYC',
+  manhattan: 'NYC',
   jfk: 'JFK',
   newark: 'EWR',
   miami: 'MIA',
@@ -147,11 +149,12 @@ export async function parseUserQueryWithGemini(
         const prompt = `You are an expert flight search query parser. Extract flight search parameters from the user's message.
 Return ONLY valid JSON matching this exact schema:
 {
-  "destination": "3-letter IATA code (use TYO for Tokyo, ICN for Seoul, BKK for Bangkok, EZE for Buenos Aires, GIG for Rio, EBB for Entebbe/Uganda)",
+  "destination": "3-letter IATA code or metro code (use NYC for New York/JFK/EWR, LON for London, TYO for Tokyo, ICN for Seoul, BKK for Bangkok, EZE for Buenos Aires, GIG for Rio, EBB for Entebbe/Uganda)",
   "nights": integer (trip duration in nights, e.g. 3, 4; default 4. Do NOT confuse with 'next X months'),
   "monthsAhead": integer (how many months ahead to search if user says 'in the next X months', e.g. 2, 4, 6; default 2),
   "targetMonth": "YYYY-MM" (e.g. "2026-12" if a specific month name is requested, null if searching across next X months),
-  "departureDayOfWeek": "Friday" | "Saturday" | "Thursday" | null,
+  "departureDayOfWeek": "Monday" | "Tuesday" | "Wednesday" | "Thursday" | "Friday" | "Saturday" | "Sunday" | null (MUST be null unless user explicitly named a specific day in the message),
+  "returnDayOfWeek": "Monday" | "Tuesday" | "Wednesday" | "Thursday" | "Friday" | "Saturday" | "Sunday" | null (MUST be null unless explicitly named),
   "maxPriceGbp": number or null (only if user explicitly stated a price/budget cap like 'under 1600' or 'max 1700', otherwise null),
   "preferLowApd": true,
   "summary": "Brief 1-line plain English summary of what will be searched"
@@ -216,11 +219,12 @@ export async function parseAudioWithGemini(
 Return ONLY valid JSON matching this exact schema:
 {
   "transcription": "Verbatim transcript of what the user said in the voice note",
-  "destination": "3-letter IATA code (use TYO for Tokyo, ICN for Seoul, BKK for Bangkok, EZE for Buenos Aires, GIG for Rio, EBB for Entebbe)",
+  "destination": "3-letter IATA code or metro code (use NYC for New York/JFK/EWR, LON for London, TYO for Tokyo, ICN for Seoul, BKK for Bangkok, EZE for Buenos Aires, GIG for Rio, EBB for Entebbe)",
   "nights": integer (trip length in nights, e.g. 3, 4; default 4),
   "monthsAhead": integer (search window in months if user says 'next X months', default 2),
   "targetMonth": "YYYY-MM" (e.g. "2026-12", null if unspecified),
-  "departureDayOfWeek": "Friday" | "Saturday" | "Thursday" | null,
+  "departureDayOfWeek": "Monday" | "Tuesday" | "Wednesday" | "Thursday" | "Friday" | "Saturday" | "Sunday" | null (MUST be null unless user explicitly named a specific day in the message),
+  "returnDayOfWeek": "Monday" | "Tuesday" | "Wednesday" | "Thursday" | "Friday" | "Saturday" | "Sunday" | null (MUST be null unless explicitly named),
   "maxPriceGbp": number or null (only if user explicitly stated a price like 'under 1600', otherwise null),
   "summary": "Brief 1-line plain English summary of what will be searched"
 }
@@ -373,12 +377,20 @@ export function parseUserQueryHeuristic(userText, currentYear, currentMonth) {
     }
   }
 
+  // 6. Departure day of week (strictly null unless user explicitly specified a day)
+  let departureDayOfWeek = null;
+  const dayMatch = text.match(/\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i);
+  if (dayMatch) {
+    const d = dayMatch[1].toLowerCase();
+    departureDayOfWeek = d.charAt(0).toUpperCase() + d.slice(1);
+  }
+
   return {
     destination,
     nights,
     monthsAhead,
     targetMonth,
-    departureDayOfWeek: 'Friday',
+    departureDayOfWeek,
     returnDayOfWeek: null,
     maxPriceGbp,
     explicitBudget,

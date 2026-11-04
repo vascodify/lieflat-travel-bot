@@ -48,9 +48,9 @@ export function parseDayOfWeek(input) {
 export function expandDatePairs({
   outboundDate = null,
   returnDate = null,
-  departureDayOfWeek = 'Friday', // e.g., "Friday"
+  departureDayOfWeek = null, // e.g., "Friday" or null for flexible days
   returnDayOfWeek = null, // e.g., "Tuesday"
-  nights = 4, // e.g., 4 nights (Friday -> Tuesday)
+  nights = 4, // e.g., 4 nights
   monthsAhead = 2, // e.g., scan next 2 months
   startDateFrom = null, // optional YYYY-MM-DD anchor
   targetMonth = null, // optional month number (1-12) or "2026-12"
@@ -84,14 +84,15 @@ export function expandDatePairs({
     )
   );
 
-  const depDow = parseDayOfWeek(departureDayOfWeek) ?? 5; // Default Friday (5)
+  const explicitDepDow = parseDayOfWeek(departureDayOfWeek);
+  // When no explicit day is requested, scan both Tuesdays (saver weekday fares) and Fridays (weekend departures)
+  const targetDays = explicitDepDow !== null ? [explicitDepDow] : [2, 5];
   const retDow = parseDayOfWeek(returnDayOfWeek);
 
   // Compute trip length in nights:
-  // If both departureDayOfWeek and returnDayOfWeek are provided (e.g. Friday=5 to Tuesday=2 -> (2 - 5 + 7) % 7 = 4 nights)
   let tripNights = Number(nights) || 4;
-  if (retDow !== null && !nights) {
-    const delta = (retDow - depDow + 7) % 7;
+  if (retDow !== null && explicitDepDow !== null && !nights) {
+    const delta = (retDow - explicitDepDow + 7) % 7;
     tripNights = delta === 0 ? 7 : delta;
   }
 
@@ -137,7 +138,7 @@ export function expandDatePairs({
   const allCandidates = [];
   const iter = new Date(cursor);
   while (iter <= endWindow) {
-    if (iter.getUTCDay() === depDow) {
+    if (targetDays.includes(iter.getUTCDay())) {
       if (!monthFilter || iter.getUTCMonth() + 1 === monthFilter) {
         // Pair A: Same-day destination arrival (D -> D + tripNights)
         const retSameDayObj = new Date(iter.getTime() + tripNights * 24 * 60 * 60 * 1000);

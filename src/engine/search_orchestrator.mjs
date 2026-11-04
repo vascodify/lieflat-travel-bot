@@ -64,7 +64,7 @@ export async function orchestrateLieFlatSearch({
   maxDestinations = 6,
   outboundDate = null,
   returnDate = null,
-  departureDayOfWeek = 'Friday',
+  departureDayOfWeek = null,
   returnDayOfWeek = null,
   nights = 4,
   monthsAhead = 2,
@@ -73,7 +73,7 @@ export async function orchestrateLieFlatSearch({
   maxPriceGbp = 1700,
   currency = 'GBP',
   minDirectHours = 8,
-  minConnectingLongLegHours = 7,
+  minConnectingLongLegHours = 6.5,
   maxLayoverHours = 8,
   allowLieFlatNarrowbodyExceptions = true,
   allowedAircraftFamilies = null,
@@ -490,8 +490,11 @@ export async function orchestrateLieFlatSearch({
       }
       lhrPositioning = positioningCache.get(posKey);
 
-      // Enforce zero-overnight positioning: reject flights requiring overnight stays/hotels in Europe
-      if (!lhrPositioning?.options || lhrPositioning.options.length === 0) {
+      // Enforce zero-overnight positioning: reject European hub flights requiring overnight stays/hotels in Europe
+      if (
+        lhrPositioning?.positioningNeeded !== false &&
+        (!lhrPositioning?.options || lhrPositioning.options.length === 0)
+      ) {
         continue;
       }
     }

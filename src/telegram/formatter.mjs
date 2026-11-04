@@ -217,11 +217,22 @@ export function formatFlightDealHtml(match, index = 1) {
     match.inbound?.totalDurationMins || (inboundLeg.durationMins ?? 720)
   );
 
+  const isLondonDirect =
+    ['LHR', 'LGW', 'LCY', 'STN', 'LTN'].includes(hubIata) ||
+    !bestPos ||
+    posResult?.positioningNeeded === false;
+
   // Build the user's exact clean card layout
-  let card = `<b>Option ${index} for ${totalCostStr} Total cost (${posCostStr} recommended LHR connection + ${bizCostStr} Biz flights)</b>\n`;
-  card += `${escapeHtml(lhrOutDate)} @ ${escapeHtml(lhrOutDepTime)}\n`;
-  card += `LHR to ${escapeHtml(hubIata)} arriving ${escapeHtml(lhrOutArrTime)} with ${escapeHtml(lhrOutAirline)} ${escapeHtml(lhrOutAircraft)}\n\n`;
-  card += `<i>${escapeHtml(outBufferText)}</i>\n\n`;
+  let card = '';
+  if (isLondonDirect) {
+    card += `<b>Option ${index} for ${bizCostStr} Total cost (Departing London)</b>\n`;
+    card += `${escapeHtml(outBizDate)} @ ${escapeHtml(outBizDepTime)}\n`;
+  } else {
+    card += `<b>Option ${index} for ${totalCostStr} Total cost (${posCostStr} recommended LHR connection + ${bizCostStr} Biz flights)</b>\n`;
+    card += `${escapeHtml(lhrOutDate)} @ ${escapeHtml(lhrOutDepTime)}\n`;
+    card += `LHR to ${escapeHtml(hubIata)} arriving ${escapeHtml(lhrOutArrTime)} with ${escapeHtml(lhrOutAirline)} ${escapeHtml(lhrOutAircraft)}\n\n`;
+    card += `<i>${escapeHtml(outBufferText)}</i>\n\n`;
+  }
 
   // Outbound Business Flight Legs (handles direct as well as 1+ stopovers with individual photos & buffers)
   const outLegs =
@@ -311,15 +322,17 @@ export function formatFlightDealHtml(match, index = 1) {
     }
   });
 
-  card += `<i>${escapeHtml(inBufferText)}</i>\n\n`;
-  card += `${escapeHtml(hubIata)} to LHR arriving ${escapeHtml(lhrInArrTime)} with ${escapeHtml(lhrInAirline)} ${escapeHtml(lhrInAircraft)}\n`;
+  if (!isLondonDirect) {
+    card += `<i>${escapeHtml(inBufferText)}</i>\n\n`;
+    card += `${escapeHtml(hubIata)} to LHR arriving ${escapeHtml(lhrInArrTime)} with ${escapeHtml(lhrInAirline)} ${escapeHtml(lhrInAircraft)}\n`;
+  }
 
   // Live Booking Deep Links
   card += `\n🔗 <b>Live Booking Links:</b>\n`;
   if (match.bookingLinks) {
     card += `• <b>Business Class (${escapeHtml(hubIata)} ⇄ ${escapeHtml(destination)}):</b> ${formatOtaDeepLinks(match.bookingLinks)}\n`;
   }
-  if (bestPos?.bookingLinks) {
+  if (!isLondonDirect && bestPos?.bookingLinks) {
     card += `• <b>LHR Positioning (LHR ⇄ ${escapeHtml(hubIata)}):</b> ${formatOtaDeepLinks(bestPos.bookingLinks)}\n`;
   }
 

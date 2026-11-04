@@ -320,11 +320,11 @@ I hunt down <b>true 180° lie-flat Business Class</b> flight deals departing low
 async function executeSearchAndReply(chatId, params) {
   await sendChatAction(chatId, 'typing');
 
-  // Select top hubs based on target geography
+  // Select top hubs including LHR (London direct/feeder) + low-APD European origins
   const latamDestinations = ['GIG', 'GRU', 'EZE', 'BOG', 'LIM', 'SCL', 'MEX', 'CUN'];
-  let searchOrigins = ['OSL', 'ARN', 'FRA', 'MUC', 'MXP', 'MAD', 'LIS', 'DUB', 'VIE'];
+  let searchOrigins = ['LHR', 'MAD', 'LIS', 'DUB', 'FRA', 'OSL', 'ARN', 'MXP', 'MUC', 'VIE'];
   if (latamDestinations.includes(params.destination)) {
-    searchOrigins = ['MAD', 'LIS', 'BCN', 'MXP', 'FCO', 'FRA', 'CDG'];
+    searchOrigins = ['LHR', 'MAD', 'LIS', 'BCN', 'MXP', 'FCO', 'FRA', 'CDG'];
   }
 
   const budgetCeiling = params.maxPriceGbp || 2400;
@@ -334,11 +334,14 @@ async function executeSearchAndReply(chatId, params) {
   const searchResult = await orchestrateLieFlatSearch({
     origins: searchOrigins,
     destinations: [params.destination],
+    departureDayOfWeek: params.departureDayOfWeek || null,
+    returnDayOfWeek: params.returnDayOfWeek || null,
     nights: params.nights || 4,
     monthsAhead: monthsWindow,
     targetMonth: params.targetMonth || null,
     maxPriceGbp: budgetCeiling,
     maxDatePairs,
+    minConnectingLongLegHours: 6.5,
     includeLhrPositioning: true,
     includeCabinPhotos: true,
   });
