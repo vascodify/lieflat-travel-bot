@@ -75,8 +75,8 @@ export function expandDatePairs({
   const now = startDateFrom ? new Date(`${startDateFrom}T00:00:00Z`) : new Date();
   // Start 14 days in the future by default so Business Class advance-purchase saver fares (I/Z class) are available
   const offsetDays = startDateFrom ? 0 : 14;
-  const cursor = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + offsetDays));
-  const endWindow = new Date(
+  let cursor = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + offsetDays));
+  let endWindow = new Date(
     Date.UTC(
       cursor.getUTCFullYear(),
       cursor.getUTCMonth() + Math.max(1, Number(monthsAhead) || 2),
@@ -114,12 +114,23 @@ export function expandDatePairs({
       'december',
     ];
     const mIdx = monthNames.findIndex((m) => m.startsWith(mStr));
+    let targetYear = now.getUTCFullYear();
     if (mIdx !== -1) {
       monthFilter = mIdx + 1;
+      if (monthFilter < now.getUTCMonth() + 1) targetYear += 1;
     } else if (/^\d{4}-(\d{2})$/.test(mStr)) {
+      targetYear = Number(mStr.split('-')[0]);
       monthFilter = Number(mStr.split('-')[1]);
     } else if (/^\d{1,2}$/.test(mStr)) {
       monthFilter = Number(mStr);
+      if (monthFilter < now.getUTCMonth() + 1) targetYear += 1;
+    }
+
+    if (monthFilter) {
+      const monthStart = new Date(Date.UTC(targetYear, monthFilter - 1, 1));
+      const monthEnd = new Date(Date.UTC(targetYear, monthFilter, 0, 23, 59, 59));
+      cursor = monthStart > cursor ? monthStart : cursor;
+      endWindow = monthEnd;
     }
   }
 

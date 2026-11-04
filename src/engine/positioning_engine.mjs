@@ -55,12 +55,22 @@ export function computeBufferMinutes(date1, time1, date2, time2) {
 function scoreLegConvenience({
   bufferMins,
   minBufferMins = 150,
+  maxBufferMins = 330, // 5.5 hours maximum buffer
   stops = 0,
   depTimeStr = '09:00',
   arrTimeStr = '12:00',
   isOvernightPositioning = false,
+  allowOvernightPositioning = false,
 }) {
   if (bufferMins === null || bufferMins < minBufferMins) {
+    return { valid: false, score: -9999 };
+  }
+  // Hard maximum buffer to prevent excessive waiting or forced airport overnight stays
+  if (bufferMins > maxBufferMins) {
+    return { valid: false, score: -9999 };
+  }
+  // Strictly disallow overnight positioning stays requiring a hotel unless explicitly allowed
+  if (!allowOvernightPositioning && isOvernightPositioning) {
     return { valid: false, score: -9999 };
   }
 
@@ -150,6 +160,8 @@ export async function findLhrPositioningFlights({
   businessReturnHubArrivalDate, // YYYY-MM-DD (actual date the return long-haul lands back at the European hub!)
   businessReturnHubArrivalTime, // HH:MM (actual time the return long-haul lands back at the European hub!)
   minBufferHours = 2.5,
+  maxBufferHours = 5.5,
+  allowOvernightPositioning = false,
   currency = 'GBP',
 } = {}) {
   const home = String(homeAirport || 'LHR').trim().toUpperCase();
@@ -163,35 +175,29 @@ export async function findLhrPositioningFlights({
     };
   }
 
-  const minBufferMins = Math.round(Number(minBufferHours) * 60); // 150 mins (2.5h)
+  const minBufferMins = Math.round(Number(minBufferHours) * 60); // default 150 mins (2.5h)
+  const maxBufferMins = Math.round(Number(maxBufferHours) * 60); // default 330 mins (5.5h)
 
   // Determine candidate outbound date(s) for LHR -> HUB:
-  // If Business Class departs at e.g. 12:20, check same-day (2026-12-08) AND previous evening (2026-12-07) as fallback.
   const bizOutMins = parseTimeToMins(businessOutboundDepTime) ?? 720;
-  // Earliest LHR -> Europe arrivals are typically ~08:45-09:30 local time.
-  // If bizOutMins - minBufferMins < 540 (09:00), same-day morning arrival may not exist, so also check previous day!
-  const checkSameDayOut = bizOutMins - minBufferMins >= 480; // >= 08:00 arrival possible
-  const checkPrevDayOut = bizOutMins - minBufferMins < 660; // If biz departs before 13:30, also fetch previous day in case same-day is tight
+  const checkSameDayOut = bizOutMins - minBufferMins >= 450;
+  const checkPrevDayOut = allowOvernightPositioning && bizOutMins - minBufferMins < 660;
 
   // Determine candidate inbound date(s) for HUB -> LHR:
-  // Based on actual landing date/time of the return long-haul flight at the hub!
   const retArrivalDate = businessReturnHubArrivalDate || businessOutboundDate;
   const bizRetArrMins = parseTimeToMins(businessReturnHubArrivalTime) ?? 540;
-  // Latest Europe -> LHR departures are typically ~21:30-22:15 local time.
-  // If bizRetArrMins + minBufferMins <= 1320 (22:00), same-day return to LHR is possible.
   const primaryRetDate =
-    bizRetArrMins + minBufferMins <= 1305
+    bizRetArrMins + minBufferMins <= 1305 || !allowOvernightPositioning
       ? retArrivalDate
       : addDaysToIsoDate(retArrivalDate, 1);
 
   const outboundDatesToQuery = [];
-  if (checkSameDayOut) outboundDatesToQuery.push(businessOutboundDate);
+  if (checkSameDayOut || !allowOvernightPositioning) outboundDatesToQuery.push(businessOutboundDate);
   if (checkPrevDayOut) outboundDatesToQuery.push(addDaysToIsoDate(businessOutboundDate, -1));
   if (outboundDatesToQuery.length === 0) outboundDatesToQuery.push(businessOutboundDate);
 
   const inboundDatesToQuery = [primaryRetDate];
-  if (primaryRetDate === retArrivalDate && bizRetArrMins + minBufferMins >= 1080) {
-    // Also check next morning if landing in the evening
+  if (allowOvernightPositioning && primaryRetDate === retArrivalDate && bizRetArrMins + minBufferMins >= 1080) {
     inboundDatesToQuery.push(addDaysToIsoDate(retArrivalDate, 1));
   }
 
@@ -240,10 +246,12 @@ export async function findLhrPositioningFlights({
       const conv = scoreLegConvenience({
         bufferMins,
         minBufferMins,
+        maxBufferMins,
         stops: itin.stops,
         depTimeStr: itin.departureTime,
         arrTimeStr: itin.arrivalTime,
         isOvernightPositioning: isPrevDay,
+        allowOvernightPositioning,
       });
       if (!conv.valid) continue;
 
@@ -272,10 +280,12 @@ export async function findLhrPositioningFlights({
       const conv = scoreLegConvenience({
         bufferMins,
         minBufferMins,
+        maxBufferMins,
         stops: itin.stops,
         depTimeStr: itin.departureTime,
         arrTimeStr: itin.arrivalTime,
         isOvernightPositioning: isNextDay,
+        allowOvernightPositioning,
       });
       if (!conv.valid) continue;
 

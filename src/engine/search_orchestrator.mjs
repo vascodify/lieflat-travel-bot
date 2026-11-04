@@ -65,7 +65,7 @@ export async function orchestrateLieFlatSearch({
   outboundDate = null,
   returnDate = null,
   departureDayOfWeek = 'Friday',
-  returnDayOfWeek = 'Tuesday',
+  returnDayOfWeek = null,
   nights = 4,
   monthsAhead = 2,
   targetMonth = null,
@@ -268,6 +268,24 @@ export async function orchestrateLieFlatSearch({
 
   const verifiedMatches = [];
   const positioningCache = new Map();
+  const cabinPhotoCache = new Map();
+
+  async function resolveSegmentPhotos(seg) {
+    if (!includeCabinPhotos) return null;
+    const airline = seg.operatingCarrierName || seg.carrierName || seg.carrierCode || 'Airline';
+    const aircraft = seg.aircraft || 'Widebody';
+    const key = `${airline}___${aircraft}`.toLowerCase();
+    if (cabinPhotoCache.has(key)) {
+      return cabinPhotoCache.get(key);
+    }
+    const p = await fetchCabinAndBedPhotos({
+      airlineName: airline,
+      aircraftName: aircraft,
+      downloadDir: photoDownloadDir,
+    });
+    cabinPhotoCache.set(key, p);
+    return p;
+  }
 
   for (const cand of topToVerify) {
     const { origin, destination, datePair, outboundItinerary, outboundEvaluation } = cand;
@@ -318,8 +336,8 @@ export async function orchestrateLieFlatSearch({
         }
       }
 
-      if (passingReturns.length === 0) {
-        // Fallback: if no return met the strict nights filter, allow passing returns without dropping results
+      if (passingReturns.length === 0 && !nights) {
+        // Fallback ONLY when no explicit nights target was requested: allow passing returns without dropping results
         for (const rItin of returnItins) {
           const evalRet = evaluateDirectionItinerary(rItin, {
             maxPriceGbp,
@@ -376,6 +394,61 @@ export async function orchestrateLieFlatSearch({
       selectedReturnSegments: bestReturnMatch?.itinerary?.segments || null,
     });
 
+    // Fetch individual verified cabin photos for every segment on the outbound business route
+    const outboundEnriched = outboundEvaluation.enrichedSegments || outboundItinerary.segments || [];
+    const outboundLegs = [];
+    for (const seg of outboundEnriched) {
+      const legPhotos = await resolveSegmentPhotos(seg);
+      outboundLegs.push({
+        route: `${seg.from} to ${seg.to}`,
+        from: seg.from,
+        to: seg.to,
+        fromAirportName: seg.fromAirportName,
+        toAirportName: seg.toAirportName,
+        departureDate: seg.departureDate,
+        departureTime: seg.departureTime,
+        arrivalDate: seg.arrivalDate,
+        arrivalTime: seg.arrivalTime,
+        durationMins: seg.durationMins,
+        durationHuman: seg.durationHuman,
+        carrier: seg.carrierName || seg.carrierCode,
+        carrierCode: seg.carrierCode,
+        flightNumber: seg.flightNumber,
+        aircraft: seg.aircraft,
+        seatType: seg.equipmentClassification?.seatLabel || 'True 180° Lie-Flat Seat',
+        cabinPhotos: legPhotos,
+      });
+    }
+
+    // Fetch individual verified cabin photos for every segment on the return business route
+    const inboundLegs = [];
+    if (bestReturnMatch) {
+      const returnEnriched =
+        bestReturnMatch.evaluation?.enrichedSegments || bestReturnMatch.itinerary.segments || [];
+      for (const seg of returnEnriched) {
+        const legPhotos = await resolveSegmentPhotos(seg);
+        inboundLegs.push({
+          route: `${seg.from} to ${seg.to}`,
+          from: seg.from,
+          to: seg.to,
+          fromAirportName: seg.fromAirportName,
+          toAirportName: seg.toAirportName,
+          departureDate: seg.departureDate,
+          departureTime: seg.departureTime,
+          arrivalDate: seg.arrivalDate,
+          arrivalTime: seg.arrivalTime,
+          durationMins: seg.durationMins,
+          durationHuman: seg.durationHuman,
+          carrier: seg.carrierName || seg.carrierCode,
+          carrierCode: seg.carrierCode,
+          flightNumber: seg.flightNumber,
+          aircraft: seg.aircraft,
+          seatType: seg.equipmentClassification?.seatLabel || 'True 180° Lie-Flat Seat',
+          cabinPhotos: legPhotos,
+        });
+      }
+    }
+
     const primaryLongLeg = outboundEvaluation.qualifyingLongLegs[0] || {};
     const photoAirline =
       primaryLongLeg.operatedBy ||
@@ -384,13 +457,13 @@ export async function orchestrateLieFlatSearch({
       outboundItinerary.primaryAirlineCode;
     const photoAircraft = primaryLongLeg.aircraft || 'Widebody';
 
-    const cabinPhotos = includeCabinPhotos
+    const cabinPhotos = outboundLegs[0]?.cabinPhotos || (includeCabinPhotos
       ? await fetchCabinAndBedPhotos({
           airlineName: photoAirline,
           aircraftName: photoAircraft,
           downloadDir: photoDownloadDir,
         })
-      : null;
+      : null);
 
     const inboundHubArrivalDate =
       bestReturnMatch?.itinerary?.arrivalDate || datePair.returnDate;
@@ -409,11 +482,18 @@ export async function orchestrateLieFlatSearch({
           businessReturnHubArrivalDate: inboundHubArrivalDate,
           businessReturnHubArrivalTime: inboundHubArrivalTime,
           minBufferHours: minPositioningBufferHours,
+          maxBufferHours: 5.5,
+          allowOvernightPositioning: false,
           currency,
         });
         positioningCache.set(posKey, posRes);
       }
       lhrPositioning = positioningCache.get(posKey);
+
+      // Enforce zero-overnight positioning: reject flights requiring overnight stays/hotels in Europe
+      if (!lhrPositioning?.options || lhrPositioning.options.length === 0) {
+        continue;
+      }
     }
 
     const bestPositioningFareGbp =
@@ -452,6 +532,7 @@ export async function orchestrateLieFlatSearch({
         qualifyingLongLegs: outboundEvaluation.qualifyingLongLegs,
         shortFeederLegs: outboundEvaluation.shortFeederLegs,
         layovers: outboundItinerary.layovers,
+        legs: outboundLegs,
       },
       inbound: bestReturnMatch
         ? {
@@ -464,6 +545,7 @@ export async function orchestrateLieFlatSearch({
             qualifyingLongLegs: bestReturnMatch.evaluation.qualifyingLongLegs,
             shortFeederLegs: bestReturnMatch.evaluation.shortFeederLegs,
             layovers: bestReturnMatch.itinerary.layovers,
+            legs: inboundLegs,
           }
         : null,
       cabinPhotos,

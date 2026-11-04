@@ -59,9 +59,30 @@ const KNOWN_AIRPORT_NAMES = {
   johannesburg: 'JNB',
   'cape town': 'CPT',
   nairobi: 'NBO',
+  entebbe: 'EBB',
+  uganda: 'EBB',
+  kampala: 'EBB',
   maldives: 'MLE',
   male: 'MLE',
   zanzibar: 'ZNZ',
+  mauritius: 'MRU',
+  seychelles: 'SEZ',
+  cairo: 'CAI',
+  morocco: 'RAK',
+  marrakech: 'RAK',
+  casablanca: 'CMN',
+  japan: 'TYO',
+  argentina: 'EZE',
+  brazil: 'GIG',
+  colombia: 'BOG',
+  peru: 'LIM',
+  chile: 'SCL',
+  korea: 'ICN',
+  thailand: 'BKK',
+  vietnam: 'SGN',
+  hanoi: 'HAN',
+  saigon: 'SGN',
+  'ho chi minh': 'SGN',
   sydney: 'SYD',
   melbourne: 'MEL',
   auckland: 'AKL',
@@ -107,21 +128,26 @@ function parseNumberToken(token) {
 
 export async function parseUserQueryWithGemini(
   userText,
-  { geminiApiKey = process.env.GEMINI_API_KEY, modelName = process.env.GEMINI_MODEL || 'gemini-3.8-flash' } = {}
+  { geminiApiKey = process.env.GEMINI_API_KEY, modelName = process.env.GEMINI_MODEL || 'gemini-3.5-flash' } = {}
 ) {
   const now = new Date();
   const currentYear = now.getFullYear();
   const currentMonth = now.getMonth() + 1;
 
-  // Always compute heuristic baseline so we never lose nights vs monthsAhead distinction
+  // Compute heuristic baseline
   const heuristic = parseUserQueryHeuristic(userText, currentYear, currentMonth);
 
-  if (geminiApiKey && geminiApiKey.startsWith('AIza')) {
-    try {
-      const prompt = `You are an expert flight search query parser. Extract flight search parameters from the user's message.
+  if (geminiApiKey && typeof geminiApiKey === 'string' && geminiApiKey.trim().length > 10) {
+    const candidateModels = [modelName, 'gemini-3.5-flash', 'gemini-3.6-flash'].filter(
+      (m, idx, arr) => arr.indexOf(m) === idx
+    );
+
+    for (const mod of candidateModels) {
+      try {
+        const prompt = `You are an expert flight search query parser. Extract flight search parameters from the user's message.
 Return ONLY valid JSON matching this exact schema:
 {
-  "destination": "3-letter IATA code (use TYO for Tokyo, ICN for Seoul, BKK for Bangkok, EZE for Buenos Aires, GIG for Rio)",
+  "destination": "3-letter IATA code (use TYO for Tokyo, ICN for Seoul, BKK for Bangkok, EZE for Buenos Aires, GIG for Rio, EBB for Entebbe/Uganda)",
   "nights": integer (trip duration in nights, e.g. 3, 4; default 4. Do NOT confuse with 'next X months'),
   "monthsAhead": integer (how many months ahead to search if user says 'in the next X months', e.g. 2, 4, 6; default 2),
   "targetMonth": "YYYY-MM" (e.g. "2026-12" if a specific month name is requested, null if searching across next X months),
@@ -134,35 +160,41 @@ Return ONLY valid JSON matching this exact schema:
 Current date: ${now.toISOString().split('T')[0]}.
 User message: "${userText}"`;
 
-      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${geminiApiKey}`;
-      const resp = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: {
-            responseMimeType: 'application/json',
-            temperature: 0.1,
-          },
-        }),
-      });
+        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${mod}:generateContent?key=${geminiApiKey}`;
+        const resp = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: {
+              responseMimeType: 'application/json',
+              temperature: 0.1,
+            },
+          }),
+        });
 
-      if (resp.ok) {
-        const data = await resp.json();
-        const rawJsonText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (rawJsonText) {
-          const parsed = JSON.parse(rawJsonText);
-          if (parsed.destination && parsed.destination.length === 3) {
-            parsed.destination = parsed.destination.toUpperCase();
+        if (resp.ok) {
+          const data = await resp.json();
+          const rawJsonText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (rawJsonText) {
+            const parsed = JSON.parse(rawJsonText);
+            if (parsed.destination && parsed.destination.length === 3) {
+              parsed.destination = parsed.destination.toUpperCase();
+            } else {
+              parsed.destination = heuristic.destination || null;
+            }
             parsed.nights = Number(parsed.nights) || heuristic.nights || 4;
             parsed.monthsAhead = Number(parsed.monthsAhead) || heuristic.monthsAhead || 2;
             parsed.maxPriceGbp = parsed.maxPriceGbp ? Number(parsed.maxPriceGbp) : heuristic.maxPriceGbp;
+            if (!parsed.summary) {
+              parsed.summary = heuristic.summary;
+            }
             return parsed;
           }
         }
+      } catch (err) {
+        // try next candidate model
       }
-    } catch (err) {
-      console.warn('[GeminiParser] Gemini API parse failed, falling back to heuristic parser:', err.message);
     }
   }
 
@@ -172,16 +204,11 @@ User message: "${userText}"`;
 export async function parseAudioWithGemini(
   audioBuffer,
   mimeType = 'audio/ogg',
-  { geminiApiKey = process.env.GEMINI_API_KEY, modelName = process.env.GEMINI_MODEL || 'gemini-3.8-flash' } = {}
+  { geminiApiKey = process.env.GEMINI_API_KEY, modelName = process.env.GEMINI_MODEL || 'gemini-3.5-flash' } = {}
 ) {
   const now = new Date();
   if (!geminiApiKey) {
     throw new Error('GEMINI_API_KEY is missing in your .env file.');
-  }
-  if (!geminiApiKey.startsWith('AIza')) {
-    throw new Error(
-      'Your GEMINI_API_KEY in .env does not appear to be a valid Google AI Studio key (keys from aistudio.google.com start with "AIzaSy...").'
-    );
   }
 
   const base64Audio = Buffer.from(audioBuffer).toString('base64');
@@ -189,7 +216,7 @@ export async function parseAudioWithGemini(
 Return ONLY valid JSON matching this exact schema:
 {
   "transcription": "Verbatim transcript of what the user said in the voice note",
-  "destination": "3-letter IATA code (use TYO for Tokyo, ICN for Seoul, BKK for Bangkok, EZE for Buenos Aires, GIG for Rio)",
+  "destination": "3-letter IATA code (use TYO for Tokyo, ICN for Seoul, BKK for Bangkok, EZE for Buenos Aires, GIG for Rio, EBB for Entebbe)",
   "nights": integer (trip length in nights, e.g. 3, 4; default 4),
   "monthsAhead": integer (search window in months if user says 'next X months', default 2),
   "targetMonth": "YYYY-MM" (e.g. "2026-12", null if unspecified),
@@ -200,52 +227,66 @@ Return ONLY valid JSON matching this exact schema:
 
 Current date: ${now.toISOString().split('T')[0]}.`;
 
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${geminiApiKey}`;
-  const resp = await fetch(endpoint, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents: [
-        {
-          parts: [
+  const candidateModels = [modelName, 'gemini-3.5-flash', 'gemini-3.6-flash'].filter(
+    (m, idx, arr) => arr.indexOf(m) === idx
+  );
+
+  let lastError = null;
+  for (const mod of candidateModels) {
+    try {
+      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${mod}:generateContent?key=${geminiApiKey}`;
+      const resp = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [
             {
-              inline_data: {
-                mime_type: mimeType,
-                data: base64Audio,
-              },
+              parts: [
+                {
+                  inline_data: {
+                    mime_type: mimeType,
+                    data: base64Audio,
+                  },
+                },
+                { text: prompt },
+              ],
             },
-            { text: prompt },
           ],
-        },
-      ],
-      generationConfig: {
-        responseMimeType: 'application/json',
-        temperature: 0.1,
-      },
-    }),
-  });
+          generationConfig: {
+            responseMimeType: 'application/json',
+            temperature: 0.1,
+          },
+        }),
+      });
 
-  if (!resp.ok) {
-    const errText = await resp.text();
-    throw new Error(`Gemini Audio API error (${resp.status}): ${errText}`);
+      if (!resp.ok) {
+        const errText = await resp.text();
+        lastError = new Error(`Gemini Audio API error (${resp.status}): ${errText}`);
+        continue;
+      }
+
+      const data = await resp.json();
+      const rawJsonText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!rawJsonText) {
+        continue;
+      }
+
+      const parsed = JSON.parse(rawJsonText);
+      if (parsed.destination && parsed.destination.length === 3) {
+        parsed.destination = parsed.destination.toUpperCase();
+      } else {
+        parsed.destination = null;
+      }
+      parsed.nights = Number(parsed.nights) || 4;
+      parsed.monthsAhead = Number(parsed.monthsAhead) || 2;
+      parsed.maxPriceGbp = parsed.maxPriceGbp ? Number(parsed.maxPriceGbp) : 2400;
+      return parsed;
+    } catch (err) {
+      lastError = err;
+    }
   }
 
-  const data = await resp.json();
-  const rawJsonText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!rawJsonText) {
-    throw new Error('Gemini did not return parsed audio contents.');
-  }
-
-  const parsed = JSON.parse(rawJsonText);
-  if (parsed.destination && parsed.destination.length === 3) {
-    parsed.destination = parsed.destination.toUpperCase();
-  } else {
-    parsed.destination = 'ICN';
-  }
-  parsed.nights = Number(parsed.nights) || 4;
-  parsed.monthsAhead = Number(parsed.monthsAhead) || 2;
-  parsed.maxPriceGbp = parsed.maxPriceGbp ? Number(parsed.maxPriceGbp) : 2400;
-  return parsed;
+  throw lastError || new Error('Could not process audio with Gemini.');
 }
 
 export function parseUserQueryHeuristic(userText, currentYear, currentMonth) {
@@ -267,7 +308,7 @@ export function parseUserQueryHeuristic(userText, currentYear, currentMonth) {
       }
     }
   }
-  if (!destination) destination = 'ICN';
+  // If destination is not detected in text, leave as null (do NOT force to ICN)
 
   // 2. Months Ahead window (e.g. "in the next 4 months", "next 6 months", "within 3 months")
   let monthsAhead = 2;
@@ -342,8 +383,10 @@ export function parseUserQueryHeuristic(userText, currentYear, currentMonth) {
     maxPriceGbp,
     explicitBudget,
     preferLowApd: true,
-    summary: `Lie-flat to ${destination} for ${nights} nights${
-      targetMonth ? ` in ${targetMonth}` : ` (next ${monthsAhead} months)`
-    }${explicitBudget ? ` [max £${maxPriceGbp} GBP]` : ''}`,
+    summary: destination
+      ? `Lie-flat to ${destination} for ${nights} nights${
+          targetMonth ? ` in ${targetMonth}` : ` (next ${monthsAhead} months)`
+        }${explicitBudget ? ` [max £${maxPriceGbp} GBP]` : ''}`
+      : `Flight search query (${nights} nights)`,
   };
 }

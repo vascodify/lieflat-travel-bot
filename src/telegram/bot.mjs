@@ -242,6 +242,14 @@ async function handleTelegramMessage(message) {
       speechHeader += `🎯 <b>Extracted Search:</b> ${params.summary}`;
       await sendMessage(chatId, speechHeader);
 
+      if (!params.destination) {
+        await sendMessage(
+          chatId,
+          '✈️ <b>Where would you like to travel?</b>\n\nPlease specify your destination city, country, or 3-letter airport code (e.g. <code>Entebbe, Uganda</code>, <code>Tokyo</code>, <code>Buenos Aires</code>, <code>Rio</code>, <code>Bangkok</code>).'
+        );
+        return;
+      }
+
       await executeSearchAndReply(chatId, params);
     } catch (err) {
       console.error('[Bot Error] Voice processing failed:', err);
@@ -284,6 +292,14 @@ I hunt down <b>true 180° lie-flat Business Class</b> flight deals departing low
   await sendChatAction(chatId, 'typing');
   const params = await parseUserQueryWithGemini(cleanQuery);
   console.log('[Bot Search] Parsed query:', params);
+
+  if (!params.destination) {
+    await sendMessage(
+      chatId,
+      '✈️ <b>Where would you like to travel?</b>\n\nPlease specify your destination city, country, or 3-letter airport code (e.g. <code>Entebbe, Uganda</code>, <code>Tokyo</code>, <code>Buenos Aires</code>, <code>Rio</code>, <code>Bangkok</code>).'
+    );
+    return;
+  }
 
   await sendMessage(
     chatId,

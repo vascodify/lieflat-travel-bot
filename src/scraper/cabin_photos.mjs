@@ -175,7 +175,7 @@ async function fetchBingImageCards(query, timeoutMs = 8000) {
  * 2. Upright mode (`mode === 'upright'`) selects an upright seat photo and penalizes flat bed photos.
  * 3. Bed mode (`mode === 'bed'`) requires/prioritizes a flat/bed position photo.
  */
-function scoreAndFilterCandidates(cards, { airlineMeta, aircraftMeta, mode = 'upright' }) {
+function scoreAndFilterCandidates(cards, { airlineMeta, aircraftMeta, mode = 'upright', strictAircraft = true }) {
   const verified = [];
 
   for (const card of cards) {
@@ -214,25 +214,23 @@ function scoreAndFilterCandidates(cards, { airlineMeta, aircraftMeta, mode = 'up
     const matchesAirline = airlineMeta.tokens.some((tok) => combinedText.includes(tok));
     if (!matchesAirline) continue;
 
-    // STRICT VERIFICATION 2: Must match the target aircraft family (e.g. 787 / A350 / A330)
-    const matchesAircraft = aircraftMeta.regex.test(combinedText);
-    if (!matchesAircraft) continue;
-
-    // STRICT VERIFICATION 3: Reject if the image filename (`fileBase`) explicitly belongs to a conflicting aircraft family!
-    // (e.g. prevents `Hainan-Business-Class-787-1.jpg` from being picked when searching for `Hainan Airbus A330`)
+    // STRICT VERIFICATION 2: Reject if the image explicitly belongs to a conflicting aircraft family!
     if (
       aircraftMeta.conflictRegex &&
-      aircraftMeta.conflictRegex.test(fileBase) &&
-      !aircraftMeta.regex.test(fileBase)
+      aircraftMeta.conflictRegex.test(combinedText) &&
+      !aircraftMeta.regex.test(combinedText)
     ) {
       continue;
     }
 
-    let score = 20; // Base score for passing strict airline + aircraft verification
+    const matchesAircraft = aircraftMeta.regex.test(combinedText);
+    if (strictAircraft && !matchesAircraft) continue;
+
+    let score = matchesAircraft ? 30 : 15; // Base score
 
     // Bonus if the image filename itself contains both airline and aircraft
     if (airlineMeta.tokens.some((tok) => fileBase.toLowerCase().includes(tok))) score += 8;
-    if (aircraftMeta.regex.test(fileBase)) score += 8;
+    if (matchesAircraft && aircraftMeta.regex.test(fileBase)) score += 8;
 
     // Bonus for business class cabin/seat terms
     if (/business|mint|polaris|delta[\s-]*one|qsuite|club[\s-]*suite|executive/i.test(combinedText)) {
@@ -248,22 +246,20 @@ function scoreAndFilterCandidates(cards, { airlineMeta, aircraftMeta, mode = 'up
 
     if (mode === 'upright') {
       // For the upright seat photo: reward seat/cabin views, strongly penalize bed/mattress/sleeping views
-      if (hasUprightSeatKeywords) score += 12;
-      if (hasBedKeywordsInFileOrTitle) score -= 35;
+      if (hasUprightSeatKeywords) score += 10;
+      if (hasBedKeywordsInFileOrTitle) score -= 25;
     } else if (mode === 'bed') {
-      // For the flat/bed photo: strongly reward explicit bed/lie-flat/mattress/sleeping keywords
-      if (hasBedKeywordsInFileOrTitle) score += 35;
-      if (/(flat[\s_-]*bed|lie[\s_-]*flat|180[\s_-]*flat|\bbed\b|\bflatbed\b|\bflat\b|mattress|sleep|reclin|-agy\b)/i.test(fileBase)) {
-        score += 45;
-      }
-      if (/^AP1Gcz/i.test(fileBase)) {
-        score -= 35;
+      // For the bed photo: require/prioritize explicit lie-flat bed features
+      if (hasBedKeywordsInFileOrTitle) {
+        score += 35;
+      } else {
+        score -= 20;
       }
     }
 
     // Trusted aviation review photography sources
     if (
-      /thepointsguy|onemileatatime|executivetraveller|liveandletsfly|headforpoints|upgradedpoints|simpleflying|samchui| Princeoftravel|turningleftforless/i.test(
+      /thepointsguy|onemileatatime|executivetraveller|liveandletsfly|headforpoints|upgradedpoints|simpleflying|samchui|princeoftravel|turningleftforless/i.test(
         purl
       )
     ) {
@@ -276,7 +272,8 @@ function scoreAndFilterCandidates(cards, { airlineMeta, aircraftMeta, mode = 'up
 
     verified.push({
       imageId,
-      title: title.replace(/\s+/g, ' ').trim(),
+      title: title.replace(/\s+/g, ' ').trim() || `${airlineMeta.fullName} Business Class Seat`,
+      imageUrl: murl || hiResProxyUrl,
       originalImageUrl: murl,
       proxyImageUrl: hiResProxyUrl,
       sourcePageUrl: purl,
@@ -350,15 +347,36 @@ export async function fetchCabinAndBedPhotos({
     bedCandidates.push(...extraCandidates);
   }
 
-  // If no upright photo found yet, run targeted upright seat query
+  // If no upright photo found yet, run targeted upright seat query with relaxed aircraft name
   if (uprightCandidates.length === 0) {
     const extraUprightCards = await fetchBingImageCards(`"${airlineMeta.fullName}" business class seat upright`);
-    const extraCandidates = scoreAndFilterCandidates(extraUprightCards, {
+    let extraCandidates = scoreAndFilterCandidates(extraUprightCards, {
       airlineMeta,
       aircraftMeta,
       mode: 'upright',
+      strictAircraft: true,
     });
+    if (extraCandidates.length === 0) {
+      extraCandidates = scoreAndFilterCandidates([...cabinCards1, ...cabinCards2, ...extraUprightCards], {
+        airlineMeta,
+        aircraftMeta,
+        mode: 'upright',
+        strictAircraft: false,
+      });
+    }
     uprightCandidates.push(...extraCandidates);
+  }
+
+  // If no bed candidates found yet, relax aircraft name requirement for bed query cards
+  if (bedCandidates.length === 0) {
+    const relaxedBedCandidates = scoreAndFilterCandidates([...bedCards1, ...bedCards2], {
+      airlineMeta,
+      aircraftMeta,
+      mode: 'bed',
+      strictAircraft: false,
+    });
+    bedCandidates.push(...relaxedBedCandidates);
+    explicitBedCandidates = bedCandidates.filter((c) => c.hasBedKeywords);
   }
 
   const uprightPick = uprightCandidates.find((c) => !c.hasBedKeywords) || uprightCandidates[0] || null;
@@ -381,8 +399,8 @@ export async function fetchCabinAndBedPhotos({
       title:
         uprightPick?.title ||
         `${airlineMeta.fullName} ${aircraftMeta.cleanName} Business Class Seat (Upright)`,
-      imageUrl: uprightPick?.proxyImageUrl || null,
-      originalImageUrl: uprightPick?.originalImageUrl || null,
+      imageUrl: uprightPick?.originalImageUrl || uprightPick?.proxyImageUrl || cabinGoogleUrl,
+      originalImageUrl: uprightPick?.originalImageUrl || cabinGoogleUrl,
       sourcePageUrl: uprightPick?.sourcePageUrl || null,
       googleImagesSearchUrl: cabinGoogleUrl,
       verifiedAirlineAndAircraft: Boolean(uprightPick),
@@ -394,8 +412,8 @@ export async function fetchCabinAndBedPhotos({
       title:
         bedPick?.title ||
         `${airlineMeta.fullName} ${aircraftMeta.cleanName} Business Class Seat (Lie-Flat Bed)`,
-      imageUrl: bedPick?.proxyImageUrl || null,
-      originalImageUrl: bedPick?.originalImageUrl || null,
+      imageUrl: bedPick?.originalImageUrl || bedPick?.proxyImageUrl || bedGoogleUrl,
+      originalImageUrl: bedPick?.originalImageUrl || bedGoogleUrl,
       sourcePageUrl: bedPick?.sourcePageUrl || null,
       googleImagesSearchUrl: bedGoogleUrl,
       verifiedAirlineAndAircraft: Boolean(bedPick),
