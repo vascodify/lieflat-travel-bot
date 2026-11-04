@@ -21,8 +21,8 @@ export function evaluateDirectionItinerary(
     maxPriceGbp = 1700,
     checkPrice = true,
     minDirectHours = 8,
-    minConnectingLongLegHours = 7,
-    maxLayoverHours = 8,
+    minConnectingLongLegHours = 6.5,
+    maxLayoverHours = null, // null = unrestricted layovers on Business legs (lounge access)
     allowLieFlatNarrowbodyExceptions = true,
     allowedAircraftFamilies = null,
     customBlockedAirlines = [],

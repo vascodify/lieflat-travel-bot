@@ -89,13 +89,15 @@ export function expandDatePairs({
   // so no bargain is missed regardless of which day of the week it departs.
   const targetDays = explicitDepDow !== null ? [explicitDepDow] : [0, 1, 2, 3, 4, 5, 6];
   const retDow = parseDayOfWeek(returnDayOfWeek);
+  // When returning on a specific day (e.g. Sunday back in London), allow return flights departing:
+  // 1. That exact day (e.g. Sunday) for same-day returns
+  // 2. The day before (e.g. Saturday) for overnight/+1 day journeys that land on Sunday!
+  const allowedRetDows = retDow !== null ? [retDow, (retDow - 1 + 7) % 7] : null;
 
-  // Compute trip length in nights:
-  let tripNights = Number(nights) || 4;
-  if (retDow !== null && explicitDepDow !== null && !nights) {
-    const delta = (retDow - explicitDepDow + 7) % 7;
-    tripNights = delta === 0 ? 7 : delta;
-  }
+  // Support single nights count or range of nights (e.g. [3, 4])
+  const candidateNightsList = Array.isArray(nights)
+    ? nights.map(Number).filter((n) => !Number.isNaN(n) && n > 0)
+    : [Number(nights) || 4];
 
   // Parse optional targetMonth
   let monthFilter = null;
@@ -141,31 +143,32 @@ export function expandDatePairs({
   while (iter <= endWindow) {
     if (targetDays.includes(iter.getUTCDay())) {
       if (!monthFilter || iter.getUTCMonth() + 1 === monthFilter) {
-        // Pair A: Same-day destination arrival (D -> D + tripNights)
-        const retSameDayObj = new Date(iter.getTime() + tripNights * 24 * 60 * 60 * 1000);
-        if (retDow === null || retSameDayObj.getUTCDay() === retDow) {
-          allCandidates.push({
-            outboundDate: toIsoDate(iter),
-            returnDate: toIsoDate(retSameDayObj),
-            outboundDow: DAY_INDEX_TO_SHORT[iter.getUTCDay()],
-            returnDow: DAY_INDEX_TO_SHORT[retSameDayObj.getUTCDay()],
-            nights: tripNights,
-            expectedArrivalDayOffset: 0,
-          });
-        }
+        for (const tripNights of candidateNightsList) {
+          // Pair A: Same-day destination arrival (D -> D + tripNights)
+          const retSameDayObj = new Date(iter.getTime() + tripNights * 24 * 60 * 60 * 1000);
+          if (allowedRetDows === null || allowedRetDows.includes(retSameDayObj.getUTCDay())) {
+            allCandidates.push({
+              outboundDate: toIsoDate(iter),
+              returnDate: toIsoDate(retSameDayObj),
+              outboundDow: DAY_INDEX_TO_SHORT[iter.getUTCDay()],
+              returnDow: DAY_INDEX_TO_SHORT[retSameDayObj.getUTCDay()],
+              nights: tripNights,
+              expectedArrivalDayOffset: 0,
+            });
+          }
 
-        // Pair B: Overnight destination arrival (D -> D + tripNights + 1)
-        // Essential for long-haul overnight flights to Asia, South America, and Africa so the traveler gets the exact requested nights AT the destination!
-        if (retDow === null) {
-          const retOvernightObj = new Date(iter.getTime() + (tripNights + 1) * 24 * 60 * 60 * 1000);
-          allCandidates.push({
-            outboundDate: toIsoDate(iter),
-            returnDate: toIsoDate(retOvernightObj),
-            outboundDow: DAY_INDEX_TO_SHORT[iter.getUTCDay()],
-            returnDow: DAY_INDEX_TO_SHORT[retOvernightObj.getUTCDay()],
-            nights: tripNights,
-            expectedArrivalDayOffset: 1,
-          });
+          // Pair B: Overnight destination arrival (D -> D + tripNights + 1)
+          if (retDow === null || allowedRetDows.includes(new Date(iter.getTime() + (tripNights + 1) * 24 * 60 * 60 * 1000).getUTCDay())) {
+            const retOvernightObj = new Date(iter.getTime() + (tripNights + 1) * 24 * 60 * 60 * 1000);
+            allCandidates.push({
+              outboundDate: toIsoDate(iter),
+              returnDate: toIsoDate(retOvernightObj),
+              outboundDow: DAY_INDEX_TO_SHORT[iter.getUTCDay()],
+              returnDow: DAY_INDEX_TO_SHORT[retOvernightObj.getUTCDay()],
+              nights: tripNights,
+              expectedArrivalDayOffset: 1,
+            });
+          }
         }
       }
     }

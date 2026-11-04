@@ -220,7 +220,7 @@ export function formatFlightDealHtml(match, index = 1) {
   const isLondonDirect =
     ['LHR', 'LGW', 'LCY', 'STN', 'LTN'].includes(hubIata) ||
     !bestPos ||
-    posResult?.positioningNeeded === false;
+    match.lhrPositioning?.positioningNeeded === false;
 
   // Build the user's exact clean card layout
   let card = '';

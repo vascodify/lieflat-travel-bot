@@ -150,11 +150,11 @@ export async function parseUserQueryWithGemini(
 Return ONLY valid JSON matching this exact schema:
 {
   "destination": "3-letter IATA code or metro code (use NYC for New York/JFK/EWR, LON for London, TYO for Tokyo, ICN for Seoul, BKK for Bangkok, EZE for Buenos Aires, GIG for Rio, EBB for Entebbe/Uganda)",
-  "nights": integer (trip duration in nights, e.g. 3, 4; default 4. Do NOT confuse with 'next X months'),
+  "nights": integer or array of integers (e.g. 4 or [3, 4] if user mentions "3 or 4 nights", "3-4 nights", etc.; default 4),
   "monthsAhead": integer (how many months ahead to search if user says 'in the next X months', e.g. 2, 4, 6; default 2),
   "targetMonth": "YYYY-MM" (e.g. "2026-12" if a specific month name is requested, null if searching across next X months),
-  "departureDayOfWeek": "Monday" | "Tuesday" | "Wednesday" | "Thursday" | "Friday" | "Saturday" | "Sunday" | null (MUST be null unless user explicitly named a specific day in the message),
-  "returnDayOfWeek": "Monday" | "Tuesday" | "Wednesday" | "Thursday" | "Friday" | "Saturday" | "Sunday" | null (MUST be null unless explicitly named),
+  "departureDayOfWeek": "Monday" | "Tuesday" | "Wednesday" | "Thursday" | "Friday" | "Saturday" | "Sunday" | null (MUST be null unless user explicitly named a specific departure day in the message),
+  "returnDayOfWeek": "Monday" | "Tuesday" | "Wednesday" | "Thursday" | "Friday" | "Saturday" | "Sunday" | null (MUST be null unless user explicitly named a return/arrival day),
   "maxPriceGbp": number or null (only if user explicitly stated a price/budget cap like 'under 1600' or 'max 1700', otherwise null),
   "preferLowApd": true,
   "summary": "Brief 1-line plain English summary of what will be searched"
@@ -186,7 +186,11 @@ User message: "${userText}"`;
             } else {
               parsed.destination = heuristic.destination || null;
             }
-            parsed.nights = Number(parsed.nights) || heuristic.nights || 4;
+            if (Array.isArray(parsed.nights)) {
+              parsed.nights = parsed.nights.map(Number).filter((n) => !Number.isNaN(n) && n > 0);
+            } else {
+              parsed.nights = Number(parsed.nights) || heuristic.nights || 4;
+            }
             parsed.monthsAhead = Number(parsed.monthsAhead) || heuristic.monthsAhead || 2;
             parsed.maxPriceGbp = parsed.maxPriceGbp ? Number(parsed.maxPriceGbp) : heuristic.maxPriceGbp;
             if (!parsed.summary) {
@@ -220,7 +224,7 @@ Return ONLY valid JSON matching this exact schema:
 {
   "transcription": "Verbatim transcript of what the user said in the voice note",
   "destination": "3-letter IATA code or metro code (use NYC for New York/JFK/EWR, LON for London, TYO for Tokyo, ICN for Seoul, BKK for Bangkok, EZE for Buenos Aires, GIG for Rio, EBB for Entebbe)",
-  "nights": integer (trip length in nights, e.g. 3, 4; default 4),
+  "nights": integer or array of integers (e.g. 4 or [3, 4] if user mentions "3 or 4 nights"; default 4),
   "monthsAhead": integer (search window in months if user says 'next X months', default 2),
   "targetMonth": "YYYY-MM" (e.g. "2026-12", null if unspecified),
   "departureDayOfWeek": "Monday" | "Tuesday" | "Wednesday" | "Thursday" | "Friday" | "Saturday" | "Sunday" | null (MUST be null unless user explicitly named a specific day in the message),
@@ -330,22 +334,31 @@ export function parseUserQueryHeuristic(userText, currentYear, currentMonth) {
     }
   }
 
-  // 3. Trip length in Nights (strictly match "nights" or "days", or "for X months in <Month>" typo)
+  // 3. Trip length in Nights (e.g. "3 or 4 nights", "3-4 nights", "4 nights")
   let nights = 4;
-  const nightsRegex = new RegExp(`\\b(${numberWordPattern})\\s*(?:nights?|days?)\\b`, 'i');
-  const nightsMatch = text.match(nightsRegex);
-  if (nightsMatch) {
-    const val = parseNumberToken(nightsMatch[1]);
-    if (val && val >= 1 && val <= 30) {
-      nights = val;
+  const rangeMatch = text.match(/\b(\d+)\s*(?:to|or|-)\s*(\d+)\s*(?:nights?|days?)\b/i);
+  if (rangeMatch) {
+    const n1 = parseInt(rangeMatch[1], 10);
+    const n2 = parseInt(rangeMatch[2], 10);
+    if (n1 >= 1 && n2 <= 30) {
+      nights = [Math.min(n1, n2), Math.max(n1, n2)];
     }
-  } else if (!hasExplicitMonthsAhead) {
-    // Handle voice-to-text typo like "Buenos Aires for 4 months in December" -> 4 nights
-    const typoNightsMatch = text.match(new RegExp(`\\bfor\\s+(${numberWordPattern})\\s*months?\\s+in\\b`, 'i'));
-    if (typoNightsMatch) {
-      const val = parseNumberToken(typoNightsMatch[1]);
-      if (val && val >= 1 && val <= 14) {
+  } else {
+    const nightsRegex = new RegExp(`\\b(${numberWordPattern})\\s*(?:nights?|days?)\\b`, 'i');
+    const nightsMatch = text.match(nightsRegex);
+    if (nightsMatch) {
+      const val = parseNumberToken(nightsMatch[1]);
+      if (val && val >= 1 && val <= 30) {
         nights = val;
+      }
+    } else if (!hasExplicitMonthsAhead) {
+      // Handle voice-to-text typo like "Buenos Aires for 4 months in December" -> 4 nights
+      const typoNightsMatch = text.match(new RegExp(`\\bfor\\s+(${numberWordPattern})\\s*months?\\s+in\\b`, 'i'));
+      if (typoNightsMatch) {
+        const val = parseNumberToken(typoNightsMatch[1]);
+        if (val && val >= 1 && val <= 14) {
+          nights = val;
+        }
       }
     }
   }
@@ -377,12 +390,26 @@ export function parseUserQueryHeuristic(userText, currentYear, currentMonth) {
     }
   }
 
-  // 6. Departure day of week (strictly null unless user explicitly specified a day)
+  // 6. Departure day of week & return day of week
   let departureDayOfWeek = null;
-  const dayMatch = text.match(/\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i);
-  if (dayMatch) {
-    const d = dayMatch[1].toLowerCase();
+  let returnDayOfWeek = null;
+
+  const depMatch = text.match(/(?:departing|leave|outbound|depart)\s+(?:on\s+a\s+|on\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)/i);
+  if (depMatch) {
+    const d = depMatch[1].toLowerCase();
     departureDayOfWeek = d.charAt(0).toUpperCase() + d.slice(1);
+  } else {
+    const standaloneDay = text.match(/\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i);
+    if (standaloneDay && !text.includes('returning') && !text.includes('back on')) {
+      const d = standaloneDay[1].toLowerCase();
+      departureDayOfWeek = d.charAt(0).toUpperCase() + d.slice(1);
+    }
+  }
+
+  const retMatch = text.match(/(?:returning|return|back|arriving\s*back)\s+(?:on\s+a\s+|on\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)/i);
+  if (retMatch) {
+    const r = retMatch[1].toLowerCase();
+    returnDayOfWeek = r.charAt(0).toUpperCase() + r.slice(1);
   }
 
   return {
@@ -391,7 +418,7 @@ export function parseUserQueryHeuristic(userText, currentYear, currentMonth) {
     monthsAhead,
     targetMonth,
     departureDayOfWeek,
-    returnDayOfWeek: null,
+    returnDayOfWeek,
     maxPriceGbp,
     explicitBudget,
     preferLowApd: true,

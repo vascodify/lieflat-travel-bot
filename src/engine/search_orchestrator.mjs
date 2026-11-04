@@ -74,7 +74,7 @@ export async function orchestrateLieFlatSearch({
   currency = 'GBP',
   minDirectHours = 8,
   minConnectingLongLegHours = 6.5,
-  maxLayoverHours = 8,
+  maxLayoverHours = null, // null = allow long layovers on Business Class legs (lounge access)
   allowLieFlatNarrowbodyExceptions = true,
   allowedAircraftFamilies = null,
   customBlockedAirlines = [],
@@ -312,9 +312,12 @@ export async function orchestrateLieFlatSearch({
           rItin.departureDate || rItin.segments[0]?.departureDate || datePair.returnDate;
         const actualNightsAtDestination = diffDays(destArrivalDate, returnDestDepDate);
 
-        // Strict enforcement: traveler must spend the exact requested nights AT the destination!
-        if (nights && actualNightsAtDestination !== nights) {
-          continue;
+        // Traveler spends the requested nights (or range of nights) AT the destination
+        if (nights) {
+          const allowedNights = Array.isArray(nights) ? nights : [nights];
+          if (!allowedNights.includes(actualNightsAtDestination)) {
+            continue;
+          }
         }
 
         const evalRet = evaluateDirectionItinerary(rItin, {

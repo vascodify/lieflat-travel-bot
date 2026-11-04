@@ -342,6 +342,7 @@ async function executeSearchAndReply(chatId, params) {
     maxPriceGbp: budgetCeiling,
     maxDatePairs,
     minConnectingLongLegHours: 6.5,
+    maxLayoverHours: null, // Allow long layovers on Business legs (enjoying lounge access)
     concurrency: 8,
     includeLhrPositioning: true,
     includeCabinPhotos: true,
@@ -350,7 +351,8 @@ async function executeSearchAndReply(chatId, params) {
   const matches = searchResult.matches || [];
 
   if (matches.length === 0) {
-    let msg = `❌ <b>No verified lie-flat flights found</b> under <b>£${budgetCeiling} GBP</b> for <code>${params.destination}</code> (${params.nights} nights`;
+    const nightsStr = Array.isArray(params.nights) ? params.nights.join('-') : params.nights;
+    let msg = `❌ <b>No verified lie-flat flights found</b> under <b>£${budgetCeiling} GBP</b> for <code>${params.destination}</code> (${nightsStr} nights`;
     if (params.targetMonth) msg += ` in ${params.targetMonth}`;
     else msg += ` over the next ${monthsWindow} months`;
     msg += `).\n\n💡 <i>Try widening your month window (e.g. "in the next 6 months") or raising your budget ceiling!</i>`;
