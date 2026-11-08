@@ -324,6 +324,11 @@ assert.equal(parsedMaputo.nights, 7);
 const parsedUln = parseUserQueryHeuristic('Ulaanbaatar 4 nights', 2026, 11);
 assert.equal(parsedUln.destination, 'ULN');
 
+const parsedSofia = parseUserQueryHeuristic('Sofia Bulgaria for 7 nights in December', 2026, 11);
+assert.equal(parsedSofia.destination, 'SOF');
+assert.equal(parsedSofia.nights, 7);
+assert.equal(parsedSofia.targetMonth, '2026-12');
+
 const sampleDealHtml = formatFlightDealHtml({
   originHub: { iata: 'FRA', taxNotes: 'Low APD tier' },
   destination: 'ICN',

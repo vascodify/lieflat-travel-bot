@@ -70,6 +70,34 @@ const KNOWN_AIRPORT_NAMES = {
   mauritius: 'MRU',
   seychelles: 'SEZ',
   cairo: 'CAI',
+  sofia: 'SOF',
+  bulgaria: 'SOF',
+  istanbul: 'IST',
+  turkey: 'IST',
+  athens: 'ATH',
+  greece: 'ATH',
+  vienna: 'VIE',
+  austria: 'VIE',
+  budapest: 'BUD',
+  hungary: 'BUD',
+  prague: 'PRG',
+  czech: 'PRG',
+  warsaw: 'WAW',
+  poland: 'WAW',
+  helsinki: 'HEL',
+  finland: 'HEL',
+  belgrade: 'BEG',
+  serbia: 'BEG',
+  bucharest: 'OTP',
+  romania: 'OTP',
+  zagreb: 'ZAG',
+  croatia: 'ZAG',
+  tirana: 'TIA',
+  albania: 'TIA',
+  skopje: 'SKP',
+  thessaloniki: 'SKG',
+  larnaca: 'LCA',
+  cyprus: 'LCA',
   maputo: 'MPM',
   mozambique: 'MPM',
   ulaanbaatar: 'ULN',
@@ -159,7 +187,7 @@ function parseNumberToken(token) {
 
 export async function parseUserQueryWithGemini(
   userText,
-  { geminiApiKey = process.env.GEMINI_API_KEY, modelName = process.env.GEMINI_MODEL || 'gemini-2.0-flash' } = {}
+  { geminiApiKey = process.env.GEMINI_API_KEY, modelName = process.env.GEMINI_MODEL || 'gemini-flash-latest' } = {}
 ) {
   const now = new Date();
   const currentYear = now.getFullYear();
@@ -169,8 +197,8 @@ export async function parseUserQueryWithGemini(
   const heuristic = parseUserQueryHeuristic(userText, currentYear, currentMonth);
 
   if (geminiApiKey && typeof geminiApiKey === 'string' && geminiApiKey.trim().length > 10) {
-    const candidateModels = [modelName, 'gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-2.5-flash'].filter(
-      (m, idx, arr) => arr.indexOf(m) === idx
+    const candidateModels = [modelName, 'gemini-flash-latest', 'gemini-3.5-flash', 'gemini-3.8-flash'].filter(
+      (m, idx, arr) => m && arr.indexOf(m) === idx
     );
 
     for (const mod of candidateModels) {
@@ -247,7 +275,7 @@ User message: "${userText}"`;
 export async function parseAudioWithGemini(
   audioBuffer,
   mimeType = 'audio/ogg',
-  { geminiApiKey = process.env.GEMINI_API_KEY, modelName = process.env.GEMINI_MODEL || 'gemini-3.5-flash' } = {}
+  { geminiApiKey = process.env.GEMINI_API_KEY, modelName = process.env.GEMINI_MODEL || 'gemini-flash-latest' } = {}
 ) {
   const now = new Date();
   if (!geminiApiKey) {
@@ -259,7 +287,7 @@ export async function parseAudioWithGemini(
 Return ONLY valid JSON matching this exact schema:
 {
   "transcription": "Verbatim transcript of what the user said in the voice note",
-  "destination": "3-letter IATA code or metro code (use NYC for New York/JFK/EWR, LON for London, TYO for Tokyo, ICN for Seoul, BKK for Bangkok, EZE for Buenos Aires, GIG for Rio, EBB for Entebbe)",
+  "destination": "3-letter IATA code or metro code (use NYC for New York/JFK/EWR, LON for London, TYO for Tokyo, ICN for Seoul, BKK for Bangkok, EZE for Buenos Aires, GIG for Rio, EBB for Entebbe, SOF for Sofia)",
   "nights": integer or array of integers (e.g. 4 or [3, 4] if user mentions "3 or 4 nights"; default 4),
   "monthsAhead": integer (search window in months if user says 'next X months', default 2),
   "targetMonth": "YYYY-MM" (e.g. "2026-12", null if unspecified),
@@ -271,8 +299,8 @@ Return ONLY valid JSON matching this exact schema:
 
 Current date: ${now.toISOString().split('T')[0]}.`;
 
-  const candidateModels = [modelName, 'gemini-3.5-flash', 'gemini-3.6-flash'].filter(
-    (m, idx, arr) => arr.indexOf(m) === idx
+  const candidateModels = [modelName, 'gemini-flash-latest', 'gemini-3.5-flash', 'gemini-3.8-flash'].filter(
+    (m, idx, arr) => m && arr.indexOf(m) === idx
   );
 
   let lastError = null;

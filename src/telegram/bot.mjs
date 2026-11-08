@@ -233,12 +233,13 @@ async function handleTelegramMessage(message) {
   }
 
   // Handle session reset commands
-  const lowerText = text.toLowerCase();
-  if (['/new', '/reset', 'new chat', 'reset', 'restart'].includes(lowerText)) {
+  const lowerText = text.toLowerCase().trim();
+  const isResetCommand = /^(?:\/)?(?:new(?:\s+|_)?chat|reset(?:\s+|_)?chat|new|reset|restart|clear)\b/i.test(lowerText);
+  if (isResetCommand) {
     userSessions.delete(chatId);
     await sendMessage(
       chatId,
-      '🔄 <b>Chat reset!</b>\n\nWhere would you like to travel next? You can specify a destination (e.g. <code>Tokyo for 4 nights in March</code>, <code>Maputo in January</code>) or say <code>"surprise me under £1300"</code>!'
+      '🔄 <b>Chat reset!</b>\n\nWhere would you like to travel next? You can specify a destination (e.g. <code>Tokyo for 4 nights in March</code>, <code>Sofia in December</code>, <code>Maputo in January</code>) or say <code>"surprise me under £1300"</code>!'
     );
     return;
   }
