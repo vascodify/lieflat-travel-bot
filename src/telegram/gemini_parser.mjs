@@ -251,7 +251,14 @@ User message: "${userText}"`;
               parsed.isOpenDestination = heuristic.isOpenDestination || false;
             }
             if (Array.isArray(parsed.nights)) {
-              parsed.nights = parsed.nights.map(Number).filter((n) => !Number.isNaN(n) && n > 0);
+              const numArr = parsed.nights.map(Number).filter((n) => !Number.isNaN(n) && n > 0);
+              if (numArr.length === 2 && numArr[1] > numArr[0] && numArr[1] - numArr[0] <= 6) {
+                const fullList = [];
+                for (let i = numArr[0]; i <= numArr[1]; i++) fullList.push(i);
+                parsed.nights = fullList;
+              } else {
+                parsed.nights = numArr;
+              }
             } else {
               parsed.nights = Number(parsed.nights) || heuristic.nights || 4;
             }
@@ -415,7 +422,12 @@ export function parseUserQueryHeuristic(userText, currentYear, currentMonth) {
       const n1 = parseInt(rangeMatch[1], 10);
       const n2 = parseInt(rangeMatch[2], 10);
       if (n1 >= 1 && n2 <= 30) {
-        nights = [Math.min(n1, n2), Math.max(n1, n2)];
+        const minN = Math.min(n1, n2);
+        const maxN = Math.max(n1, n2);
+        nights = [];
+        for (let i = minN; i <= maxN; i++) {
+          nights.push(i);
+        }
       }
     } else {
       const nightsRegex = new RegExp(`\\b(${numberWordPattern})\\s*(?:nights?|days?)\\b`, 'i');
@@ -487,9 +499,27 @@ export function parseUserQueryHeuristic(userText, currentYear, currentMonth) {
     returnDayOfWeek = r.charAt(0).toUpperCase() + r.slice(1);
   }
 
+  // 7. Region detection for open-ended searches
+  let regions = null;
+  if (/south\s*america|latin\s*america/i.test(text)) {
+    regions = ['South America'];
+  } else if (/north\s*america|\busa\b|united states/i.test(text)) {
+    regions = ['North America'];
+  } else if (/far\s*east|east\s*asia|southeast\s*asia|\basia\b/i.test(text)) {
+    regions = ['Southeast Asia', 'East Asia', 'Far East'];
+  } else if (/africa|indian\s*ocean/i.test(text)) {
+    regions = ['Southern Africa', 'East Africa', 'Africa', 'Indian Ocean'];
+  }
+
+  if (regions && !destination) {
+    isOpenDestination = true;
+    destination = 'ANY';
+  }
+
   return {
     destination,
     isOpenDestination,
+    regions,
     nights,
     monthsAhead,
     targetMonth,
@@ -499,7 +529,7 @@ export function parseUserQueryHeuristic(userText, currentYear, currentMonth) {
     explicitBudget,
     preferLowApd: true,
     summary: isOpenDestination
-      ? `Surprise lie-flat deals (${Array.isArray(nights) ? nights.join('-') : nights} nights) [max £${maxPriceGbp} GBP]`
+      ? `Surprise lie-flat deals (${Array.isArray(nights) ? nights.join('-') : nights} nights${regions ? ` in ${regions.join('/')}` : ''}) [max £${maxPriceGbp} GBP]`
       : destination
       ? `Lie-flat to ${destination} for ${Array.isArray(nights) ? nights.join('-') : nights} nights${
           targetMonth ? ` in ${targetMonth}` : ` (next ${monthsAhead} months)`

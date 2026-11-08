@@ -30,6 +30,8 @@
  * • London Positioning (LHR ⇄ LIS): [Google Flights]
  */
 
+import { getDestinationDisplay } from '../data/destinations_db.mjs';
+
 const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 function escapeHtml(str) {
@@ -91,8 +93,9 @@ export function formatHoursMinutes(mins) {
   return hPart || mPart || '0 minutes';
 }
 
-export function buildGoogleImagesUrl(carrier, aircraft) {
-  const query = `${carrier || ''} ${aircraft || ''} Business class`.trim().replace(/\s+/g, ' ');
+export function buildGoogleImagesUrl(carrier, aircraft, isPositioning = false) {
+  const suffix = isPositioning ? '' : ' Business class';
+  const query = `${carrier || ''} ${aircraft || ''}${suffix}`.trim().replace(/\s+/g, ' ');
   return `https://www.google.com/search?tbm=isch&q=${encodeURIComponent(query)}`;
 }
 
@@ -179,15 +182,17 @@ export function formatFlightDealHtml(match, index = 1) {
   const yearStr = getYear(outBizDateIso || lhrOut.departureDate);
 
   const nightsNum = match.nightsAtDestination || match.dates?.nights || 4;
+  const destMeta = getDestinationDisplay(destination, match);
+  const destStr = destMeta.label ? ` ${destMeta.label}` : '';
 
   // Build the Header
-  let card = `<b>Option ${index}  ➡️ ${totalCostStr} 🗓️ ${escapeHtml(outDateShort)} to ${escapeHtml(inDateShort)} (${yearStr})</b>\n`;
+  let card = `<b>Option ${index}${destStr} ➡️ ${totalCostStr} 🗓️ ${escapeHtml(outDateShort)} to ${escapeHtml(inDateShort)} (${yearStr})</b>\n`;
   if (isLondonDirect) {
     card += `✈️ <b>Direct flight from London (No positioning required)  🛏️</b>\n\n`;
   } else {
     card += `✈️ <b>${posCostStr} positioning + ${bizCostStr} Biz  🛏️</b>\n\n`;
     card += `${escapeHtml(posOrigin)} to ${escapeHtml(hubIata)} with ${escapeHtml(lhrOutAirline)} ${escapeHtml(lhrOutAircraft)} (${escapeHtml(lhrOutDepTime)} to ${escapeHtml(lhrOutArrTime)})\n`;
-    card += `<a href="${escapeHtml(buildGoogleImagesUrl(lhrOutAirline, lhrOutAircraft))}">[Photo Link]</a>\n\n`;
+    card += `<a href="${escapeHtml(buildGoogleImagesUrl(lhrOutAirline, lhrOutAircraft, true))}">[Photo Link]</a>\n\n`;
     card += `<i>${escapeHtml(outBufferText)}</i>\n\n`;
   }
 
@@ -278,7 +283,7 @@ export function formatFlightDealHtml(match, index = 1) {
   if (!isLondonDirect && bestPos) {
     card += `<i>${escapeHtml(inBufferText)}</i>\n\n`;
     card += `${escapeHtml(hubIata)} to ${escapeHtml(posDest)} with ${escapeHtml(lhrInAirline)} ${escapeHtml(lhrInAircraft)} (${escapeHtml(lhrInDepTime)} to ${escapeHtml(lhrInArrTime)})\n`;
-    card += `<a href="${escapeHtml(buildGoogleImagesUrl(lhrInAirline, lhrInAircraft))}">[Photo Link]</a>\n\n`;
+    card += `<a href="${escapeHtml(buildGoogleImagesUrl(lhrInAirline, lhrInAircraft, true))}">[Photo Link]</a>\n\n`;
   }
 
   // Live Booking Link - Google Flights Only
@@ -376,14 +381,16 @@ export function formatFlightDealMarkdown(match, index = 1) {
   const yearStr = getYear(outBizDateIso || lhrOut.departureDate);
 
   const nightsNum = match.nightsAtDestination || match.dates?.nights || 4;
+  const destMeta = getDestinationDisplay(destination, match);
+  const destStr = destMeta.label ? ` ${destMeta.label}` : '';
 
-  let card = `### Option ${index}  ➡️ ${totalCostStr} 🗓️ ${outDateShort} to ${inDateShort} (${yearStr})\n`;
+  let card = `Option ${index}${destStr} ➡️ ${totalCostStr} 🗓️ ${outDateShort} to ${inDateShort} (${yearStr})\n`;
   if (isLondonDirect) {
     card += `✈️ Direct flight from London (No positioning required)  🛏️\n\n`;
   } else {
     card += `✈️ ${posCostStr} positioning + ${bizCostStr} Biz  🛏️\n\n`;
     card += `${posOrigin} to ${hubIata} with ${lhrOutAirline} ${lhrOutAircraft} (${lhrOutDepTime} to ${lhrOutArrTime})\n`;
-    card += `[Photo Link](${buildGoogleImagesUrl(lhrOutAirline, lhrOutAircraft)})\n\n`;
+    card += `[Photo Link](${buildGoogleImagesUrl(lhrOutAirline, lhrOutAircraft, true)})\n\n`;
     card += `*${outBufferText}*\n\n`;
   }
 
@@ -474,7 +481,7 @@ export function formatFlightDealMarkdown(match, index = 1) {
   if (!isLondonDirect && bestPos) {
     card += `*${inBufferText}*\n\n`;
     card += `${hubIata} to ${posDest} with ${lhrInAirline} ${lhrInAircraft} (${lhrInDepTime} to ${lhrInArrTime})\n`;
-    card += `[Photo Link](${buildGoogleImagesUrl(lhrInAirline, lhrInAircraft)})\n\n`;
+    card += `[Photo Link](${buildGoogleImagesUrl(lhrInAirline, lhrInAircraft, true)})\n\n`;
   }
 
   // Live Booking Deep Links - Google Flights Only

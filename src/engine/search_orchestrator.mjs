@@ -3,6 +3,7 @@ import {
   resolveDestinations,
   resolveOriginHubs,
 } from '../data/hubs_and_routes.mjs';
+import { HISTORIC_SWEET_SPOTS } from '../data/sweet_spots.mjs';
 import { normalizeRequestedAircraftFamilies } from '../data/aircraft_db.mjs';
 import { expandDatePairs } from './date_expander.mjs';
 import { evaluateDirectionItinerary } from './filter_engine.mjs';
@@ -69,7 +70,7 @@ export async function orchestrateLieFlatSearch({
   nights = 4,
   monthsAhead = 2,
   targetMonth = null,
-  maxDatePairs = 2,
+  maxDatePairs = 6,
   maxPriceGbp = 1700,
   currency = 'GBP',
   minDirectHours = 8,
@@ -112,29 +113,58 @@ export async function orchestrateLieFlatSearch({
 
   const aircraftNormalization = normalizeRequestedAircraftFamilies(allowedAircraftFamilies);
 
-  // Build search tasks across (Origin x Destination x DatePair)
-  const searchTasks = [];
-  for (const datePair of datePairs) {
+  // Determine route pairs: for open destination searches ("surprise me"), leverage historically proven sweet spot routes
+  const isOpen = Array.isArray(destinations) && (destinations.includes('ANY') || destinations[0] === 'ANY');
+  let routePairs = [];
+
+  if (isOpen) {
+    let candidateSpots = HISTORIC_SWEET_SPOTS;
+    if (Array.isArray(regions) && regions.length > 0) {
+      const rLower = regions.map((r) => String(r).toLowerCase());
+      candidateSpots = candidateSpots.filter((sp) =>
+        rLower.some((reg) => (sp.region || '').toLowerCase().includes(reg))
+      );
+    }
+    if (Array.isArray(origins) && origins.length > 0 && !origins.includes('LON')) {
+      const origSet = new Set(origins.map((o) => o.toUpperCase()));
+      candidateSpots = candidateSpots.filter((sp) => origSet.has(sp.origin));
+    }
+    routePairs = candidateSpots.map((sp) => ({
+      orig: sp.origin,
+      dest: sp.destination,
+      typicalLowGbp: sp.typicalLowGbp,
+      region: sp.region,
+    }));
+  } else {
     for (const orig of selectedOrigins) {
       for (const dest of selectedDestinations) {
         if (orig === dest) continue;
-        searchTasks.push(async () => {
-          const resp = await fetchGoogleFlightsRoute({
-            origin: orig,
-            destination: dest,
-            outboundDate: datePair.outboundDate,
-            returnDate: datePair.returnDate,
-            cabin: 'BUSINESS',
-            currency,
-          });
-          return {
-            origin: orig,
-            destination: dest,
-            datePair,
-            resp,
-          };
-        });
+        routePairs.push({ orig, dest });
       }
+    }
+  }
+
+  // Build search tasks across route pairs x DatePair
+  const searchTasks = [];
+  for (const datePair of datePairs) {
+    for (const pair of routePairs) {
+      searchTasks.push(async () => {
+        const resp = await fetchGoogleFlightsRoute({
+          origin: pair.orig,
+          destination: pair.dest,
+          outboundDate: datePair.outboundDate,
+          returnDate: datePair.returnDate,
+          cabin: 'BUSINESS',
+          currency,
+        });
+        return {
+          origin: pair.orig,
+          destination: pair.dest,
+          datePair,
+          resp,
+          typicalLowGbp: pair.typicalLowGbp || null,
+        };
+      });
     }
   }
 
@@ -205,6 +235,7 @@ export async function orchestrateLieFlatSearch({
         datePair,
         outboundItinerary: itin,
         outboundEvaluation: evalOut,
+        typicalLowGbp: item.typicalLowGbp || null,
       });
     }
   }
@@ -518,6 +549,8 @@ export async function orchestrateLieFlatSearch({
         nights: bestReturnMatch?.nightsAtDestination ?? datePair.nights,
       },
       nightsAtDestination: bestReturnMatch?.nightsAtDestination ?? datePair.nights,
+      typicalLowGbp: cand.typicalLowGbp || null,
+      beatsHistoricalLow: cand.typicalLowGbp ? verifiedRoundTripPriceGbp < cand.typicalLowGbp : false,
       totalRoundTripPriceGbp: verifiedRoundTripPriceGbp,
       combinedTotalWithRecommendedLhrPositioningGbp:
         verifiedRoundTripPriceGbp && bestPositioningFareGbp

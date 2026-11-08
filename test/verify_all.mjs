@@ -329,22 +329,37 @@ assert.equal(parsedSofia.destination, 'SOF');
 assert.equal(parsedSofia.nights, 7);
 assert.equal(parsedSofia.targetMonth, '2026-12');
 
+const parsed5to7 = parseUserQueryHeuristic('Tokyo 5-7 nights March', 2026, 11);
+assert.equal(parsed5to7.destination, 'TYO');
+assert.deepEqual(parsed5to7.nights, [5, 6, 7]);
+
 const sampleDealHtml = formatFlightDealHtml({
   originHub: { iata: 'FRA', taxNotes: 'Low APD tier' },
   destination: 'ICN',
   airline: 'MIAT Mongolian Airlines',
   aircraft: 'Boeing 787-9 Dreamliner',
   pricing: { businessRoundTripGbp: 1462, positioningReturnGbp: 181, combinedTotalGbp: 1643, currency: 'GBP' },
+  lhrPositioning: {
+    recommendedPair: {
+      combinedPriceGbp: 181,
+      outboundFlight: { carrier: 'British Airways', aircraft: 'Airbus A320', departureTime: '08:00', arrivalTime: '10:45', transferBufferMins: 210 },
+      returnFlight: { carrier: 'British Airways', aircraft: 'Airbus A320', departureTime: '18:00', arrivalTime: '19:00', transferBufferMins: 230 }
+    }
+  },
   outbound: { departureDate: '2026-12-04', totalDuration: '14h 20m', qualifyingLongLegs: [{ airline: 'MIAT', flightNumber: 'OM138', origin: 'FRA', destination: 'UBN', duration: '9h 15m', aircraft: 'Boeing 787-9', seatType: '180° Lie-Flat' }] },
   inbound: { departureDate: '2026-12-08', totalDuration: '15h 10m', qualifyingLongLegs: [{ airline: 'MIAT', flightNumber: 'OM137', origin: 'UBN', destination: 'FRA', duration: '9h 55m', aircraft: 'Boeing 787-9', seatType: '180° Lie-Flat' }] },
   bookingLinks: { googleFlights: 'https://www.google.com/travel/flights' },
 });
+assert.equal(sampleDealHtml.includes('Option 1 🇰🇷 Seoul South Korea ➡️ £1,643'), true);
 assert.equal(sampleDealHtml.includes('MIAT Mongolian Airlines'), true);
 assert.equal(sampleDealHtml.includes('1,462'), true);
 assert.equal(sampleDealHtml.includes('1,643'), true);
 assert.equal(sampleDealHtml.includes('[Photo Link]'), true);
 assert.equal(sampleDealHtml.includes('Google Flights'), true);
-console.log('  [PASS] Telegram Bot parser, session handlers, and clean card deal formatter verified.');
+// Verify positioning link does NOT contain Business class query
+assert.equal(sampleDealHtml.includes('q=British%20Airways%20Airbus%20A320"'), true);
+assert.equal(sampleDealHtml.includes('q=MIAT%20Airbus%20A350%20Business%20class') || sampleDealHtml.includes('Business%20class'), true);
+console.log('  [PASS] Telegram Bot parser (5-7 nights expansion), flag/country opener, and clean card deal formatter verified.');
 
 if (process.argv.includes('--live')) {
   console.log('\n=== 6. Running Live Google Flights Discovery Sweep for User Example Prompt ===');

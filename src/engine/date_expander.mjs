@@ -50,11 +50,11 @@ export function expandDatePairs({
   returnDate = null,
   departureDayOfWeek = null, // e.g., "Friday" or null for flexible days
   returnDayOfWeek = null, // e.g., "Tuesday"
-  nights = 4, // e.g., 4 nights
+  nights = 4, // e.g., 4 nights or [5, 6, 7]
   monthsAhead = 2, // e.g., scan next 2 months
   startDateFrom = null, // optional YYYY-MM-DD anchor
   targetMonth = null, // optional month number (1-12) or "2026-12"
-  maxDatePairs = 6,
+  maxDatePairs = 12,
 } = {}) {
   // 1. If exact dates are supplied, return them directly
   if (outboundDate && returnDate) {
@@ -175,19 +175,38 @@ export function expandDatePairs({
     iter.setUTCDate(iter.getUTCDate() + 1);
   }
 
-  if (allCandidates.length <= maxDatePairs * 2) {
+  const effectiveLimit = Math.max(12, maxDatePairs * 2);
+  if (allCandidates.length <= effectiveLimit) {
     return allCandidates;
   }
 
-  // Evenly sample across the window
+  // Ensure every requested night length (e.g. 5, 6, 7 nights) is thoroughly represented
+  const byNights = new Map();
+  for (const c of allCandidates) {
+    const list = byNights.get(c.nights) || [];
+    list.push(c);
+    byNights.set(c.nights, list);
+  }
+
+  const quotaPerNight = Math.max(4, Math.ceil(effectiveLimit / byNights.size));
   const sampled = [];
-  const step = (allCandidates.length - 1) / Math.max(1, maxDatePairs * 2 - 1);
-  for (let i = 0; i < maxDatePairs * 2; i++) {
-    const idx = Math.round(i * step);
-    const item = allCandidates[idx];
-    if (item && !sampled.some((s) => s.outboundDate === item.outboundDate && s.returnDate === item.returnDate)) {
-      sampled.push(item);
+
+  for (const [nightCount, candidatesForNight] of byNights.entries()) {
+    if (candidatesForNight.length <= quotaPerNight) {
+      sampled.push(...candidatesForNight);
+    } else {
+      const step = (candidatesForNight.length - 1) / Math.max(1, quotaPerNight - 1);
+      for (let i = 0; i < quotaPerNight; i++) {
+        const idx = Math.round(i * step);
+        const item = candidatesForNight[idx];
+        if (item && !sampled.some((s) => s.outboundDate === item.outboundDate && s.returnDate === item.returnDate)) {
+          sampled.push(item);
+        }
+      }
     }
   }
+
+  // Sort chronologically by outbound date
+  sampled.sort((a, b) => a.outboundDate.localeCompare(b.outboundDate));
   return sampled;
 }

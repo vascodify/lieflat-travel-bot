@@ -396,12 +396,13 @@ async function executeSearchAndReply(chatId, params) {
 
   const budgetCeiling = params.maxPriceGbp || (isOpen ? 1500 : 2400);
   const monthsWindow = params.monthsAhead || 2;
-  const maxDatePairs = isOpen ? 3 : (params.targetMonth ? 8 : (monthsWindow > 2 ? Math.min(monthsWindow + 2, 7) : 5));
+  const maxDatePairs = isOpen ? 4 : (params.targetMonth ? 18 : (monthsWindow > 2 ? 10 : 8));
   const searchDestinations = isOpen ? ['ANY'] : [params.destination];
 
   const searchResult = await orchestrateLieFlatSearch({
     origins: searchOrigins,
     destinations: searchDestinations,
+    regions: params.regions || null,
     departureDayOfWeek: params.departureDayOfWeek || null,
     returnDayOfWeek: params.returnDayOfWeek || null,
     nights: params.nights || (isOpen ? [2, 3, 4, 5] : 4),
