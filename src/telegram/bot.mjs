@@ -210,6 +210,9 @@ function isUserAuthorized(from) {
   return ALLOWED_USERS.includes(username) || ALLOWED_USERS.includes(userId);
 }
 
+// In-memory conversation state per chat
+const userSessions = new Map();
+
 // Main message dispatcher
 async function handleTelegramMessage(message) {
   const chatId = message.chat?.id;
@@ -229,6 +232,17 @@ async function handleTelegramMessage(message) {
     return;
   }
 
+  // Handle session reset commands
+  const lowerText = text.toLowerCase();
+  if (['/new', '/reset', 'new chat', 'reset', 'restart'].includes(lowerText)) {
+    userSessions.delete(chatId);
+    await sendMessage(
+      chatId,
+      '🔄 <b>Chat reset!</b>\n\nWhere would you like to travel next? You can specify a destination (e.g. <code>Tokyo for 4 nights in March</code>, <code>Maputo in January</code>) or say <code>"surprise me under £1300"</code>!'
+    );
+    return;
+  }
+
   // Handle voice / audio note input
   if (voice) {
     await sendChatAction(chatId, 'record_voice');
@@ -242,12 +256,31 @@ async function handleTelegramMessage(message) {
       speechHeader += `🎯 <b>Extracted Search:</b> ${params.summary}`;
       await sendMessage(chatId, speechHeader);
 
-      if (!params.destination) {
-        await sendMessage(
-          chatId,
-          '✈️ <b>Where would you like to travel?</b>\n\nPlease specify your destination city, country, or 3-letter airport code (e.g. <code>Entebbe, Uganda</code>, <code>Tokyo</code>, <code>Buenos Aires</code>, <code>Rio</code>, <code>Bangkok</code>).'
-        );
-        return;
+      const session = userSessions.get(chatId) || {};
+      const isOpen = Boolean(params.isOpenDestination || params.destination === 'ANY');
+
+      if (!params.destination && !isOpen) {
+        if (session.lastDestination) {
+          params.destination = session.lastDestination;
+          if (!params.targetMonth && session.lastTargetMonth) {
+            params.targetMonth = session.lastTargetMonth;
+          }
+        } else {
+          await sendMessage(
+            chatId,
+            '✈️ <b>Where would you like to travel?</b>\n\nPlease specify your destination city, country, or 3-letter airport code (e.g. <code>Tokyo</code>, <code>Buenos Aires</code>, <code>Maputo</code>, <code>Nairobi</code>).\n\n💡 <i>Or say <code>"surprise me"</code> to search for cheap lie-flat deals anywhere!</i>'
+          );
+          return;
+        }
+      }
+
+      if (params.destination && params.destination !== 'ANY') {
+        userSessions.set(chatId, {
+          lastDestination: params.destination,
+          lastNights: params.nights,
+          lastTargetMonth: params.targetMonth,
+          lastMaxPriceGbp: params.maxPriceGbp,
+        });
       }
 
       await executeSearchAndReply(chatId, params);
@@ -264,15 +297,14 @@ async function handleTelegramMessage(message) {
   if (text === '/start' || text === '/help') {
     const helpMsg = `👋 <b>Welcome to Lie-Flat Flight Hunter!</b>
 
-I hunt down <b>true 180° lie-flat Business Class</b> flight deals departing low-APD European hubs, calculate <b>2–3 LHR positioning options</b> (with ≥2.5h buffers & Economy booking links), verify upright & flat-bed aircraft photos, and generate pre-selected direct booking links.
+I hunt down <b>true 180° lie-flat Business Class</b> flight deals departing low-APD European hubs, calculate <b>London positioning options</b> (LHR, LGW, LTN, STN with ≥2.5h buffers & no overnights), and generate direct Google Flights booking links.
 
 <b>How to search:</b>
-• <b>Send a voice note:</b> Hold the mic and say: <i>"Find me flights to Seoul for 3 nights in December"</i>
-• <b>Or type a text message:</b>
-  • <code>Seoul for 3 nights in Dec</code>
-  • <code>Tokyo 4 nights in the next 3 months</code>
-  • <code>Buenos Aires 4 nights in the next 6 months</code>
-  • <code>Rio de Janeiro 4 nights next month</code>
+• <b>Surprise deals:</b> <code>surprise me under £1300</code> or <code>find me a lie flat under £1500 anywhere</code>
+• <b>Specific destination:</b> <code>Tokyo for 4 nights in March</code> or <code>Maputo in January for 7 nights</code>
+• <b>Follow-ups:</b> After a search, simply say <code>What about 7 nights?</code> or <code>What about in February?</code>
+• <b>Send a voice note:</b> Hold the mic and say: <i>"Find me flights to Seoul for 4 nights"</i>
+• <b>Reset conversation:</b> Type <code>new chat</code> or <code>/reset</code>
 
 <i>Strict safety: Air India, IndiGo, Icelandair, and EgyptAir are unconditionally excluded.</i>`;
     await sendMessage(chatId, helpMsg);
@@ -284,7 +316,7 @@ I hunt down <b>true 180° lie-flat Business Class</b> flight deals departing low
   if (!cleanQuery) {
     await sendMessage(
       chatId,
-      'Please specify where and when you would like to fly! E.g. <code>Seoul for 3 nights in Dec</code> or send a voice note 🎙️'
+      'Please specify where and when you would like to fly! E.g. <code>Tokyo 4 nights in March</code> or <code>surprise me under £1300</code> 🎙️'
     );
     return;
   }
@@ -293,18 +325,52 @@ I hunt down <b>true 180° lie-flat Business Class</b> flight deals departing low
   const params = await parseUserQueryWithGemini(cleanQuery);
   console.log('[Bot Search] Parsed query:', params);
 
-  if (!params.destination) {
-    await sendMessage(
-      chatId,
-      '✈️ <b>Where would you like to travel?</b>\n\nPlease specify your destination city, country, or 3-letter airport code (e.g. <code>Entebbe, Uganda</code>, <code>Tokyo</code>, <code>Buenos Aires</code>, <code>Rio</code>, <code>Bangkok</code>).'
-    );
-    return;
+  const session = userSessions.get(chatId) || {};
+  const isOpen = Boolean(params.isOpenDestination || params.destination === 'ANY');
+
+  // If destination is missing, inherit from previous session turn
+  if (!params.destination && !isOpen) {
+    if (session.lastDestination) {
+      params.destination = session.lastDestination;
+      if (!params.targetMonth && session.lastTargetMonth) {
+        params.targetMonth = session.lastTargetMonth;
+      }
+      params.summary = `Lie-flat to ${params.destination} for ${
+        Array.isArray(params.nights) ? params.nights.join('-') : params.nights
+      } nights${params.targetMonth ? ` in ${params.targetMonth}` : ''}${
+        params.explicitBudget ? ` [max £${params.maxPriceGbp} GBP]` : ''
+      }`;
+      console.log('[Bot Session Inherited]:', params.summary);
+    } else {
+      await sendMessage(
+        chatId,
+        '✈️ <b>Where would you like to travel?</b>\n\nPlease specify your destination city, country, or 3-letter airport code (e.g. <code>Tokyo</code>, <code>Buenos Aires</code>, <code>Maputo</code>, <code>Nairobi</code>).\n\n💡 <i>Or say <code>"surprise me"</code> to search for cheap lie-flat deals anywhere!</i>'
+      );
+      return;
+    }
   }
 
-  await sendMessage(
-    chatId,
-    `🔍 <b>Searching for lie-flat deals...</b>\n• <b>Target:</b> <code>${params.summary}</code>\nScanning European hubs, return legs, cabin photos & LHR positioning flights (~20–35s).`
-  );
+  // Save updated destination context to session
+  if (params.destination && params.destination !== 'ANY') {
+    userSessions.set(chatId, {
+      lastDestination: params.destination,
+      lastNights: params.nights,
+      lastTargetMonth: params.targetMonth,
+      lastMaxPriceGbp: params.maxPriceGbp,
+    });
+  }
+
+  if (isOpen) {
+    await sendMessage(
+      chatId,
+      `🎲 <b>Hunting lie-flat surprise deals...</b>\n• <b>Budget Ceiling:</b> £${params.maxPriceGbp || 1500} GBP (Biz flights)\n• <b>Trip Length:</b> 2–5 nights\nScanning top long-haul routes across the USA, South America, Southern Africa, and Asia (~30–45s)...`
+    );
+  } else {
+    await sendMessage(
+      chatId,
+      `🔍 <b>Searching for lie-flat deals...</b>\n• <b>Target:</b> <code>${params.summary}</code>\nScanning European hubs, return legs, cabin photos & London positioning flights (~20–35s).`
+    );
+  }
 
   try {
     await executeSearchAndReply(chatId, params);
@@ -320,23 +386,24 @@ I hunt down <b>true 180° lie-flat Business Class</b> flight deals departing low
 async function executeSearchAndReply(chatId, params) {
   await sendChatAction(chatId, 'typing');
 
-  // Select top hubs including LHR (London direct/feeder) + low-APD European origins
+  const isOpen = Boolean(params.isOpenDestination || params.destination === 'ANY');
   const latamDestinations = ['GIG', 'GRU', 'EZE', 'BOG', 'LIM', 'SCL', 'MEX', 'CUN'];
-  let searchOrigins = ['LHR', 'MAD', 'LIS', 'DUB', 'FRA', 'OSL', 'ARN', 'MXP', 'MUC', 'VIE'];
-  if (latamDestinations.includes(params.destination)) {
-    searchOrigins = ['LHR', 'MAD', 'LIS', 'BCN', 'MXP', 'FCO', 'FRA', 'CDG'];
+  let searchOrigins = ['LON', 'MAD', 'LIS', 'DUB', 'FRA', 'OSL', 'ARN', 'MXP', 'MUC', 'VIE'];
+  if (!isOpen && latamDestinations.includes(params.destination)) {
+    searchOrigins = ['LON', 'MAD', 'LIS', 'BCN', 'MXP', 'FCO', 'FRA', 'CDG'];
   }
 
-  const budgetCeiling = params.maxPriceGbp || 2400;
+  const budgetCeiling = params.maxPriceGbp || (isOpen ? 1500 : 2400);
   const monthsWindow = params.monthsAhead || 2;
-  const maxDatePairs = params.targetMonth ? 8 : (monthsWindow > 2 ? Math.min(monthsWindow + 2, 7) : 5);
+  const maxDatePairs = isOpen ? 3 : (params.targetMonth ? 8 : (monthsWindow > 2 ? Math.min(monthsWindow + 2, 7) : 5));
+  const searchDestinations = isOpen ? ['ANY'] : [params.destination];
 
   const searchResult = await orchestrateLieFlatSearch({
     origins: searchOrigins,
-    destinations: [params.destination],
+    destinations: searchDestinations,
     departureDayOfWeek: params.departureDayOfWeek || null,
     returnDayOfWeek: params.returnDayOfWeek || null,
-    nights: params.nights || 4,
+    nights: params.nights || (isOpen ? [2, 3, 4, 5] : 4),
     monthsAhead: monthsWindow,
     targetMonth: params.targetMonth || null,
     maxPriceGbp: budgetCeiling,
@@ -345,17 +412,23 @@ async function executeSearchAndReply(chatId, params) {
     maxLayoverHours: null, // Allow long layovers on Business legs (enjoying lounge access)
     concurrency: 8,
     includeLhrPositioning: true,
-    includeCabinPhotos: true,
+    homeAirport: 'LON', // Automatically covers LHR, LGW, LTN, STN
+    includeCabinPhotos: false, // Formatter now uses direct Google Images search links per leg
   });
 
   const matches = searchResult.matches || [];
 
   if (matches.length === 0) {
     const nightsStr = Array.isArray(params.nights) ? params.nights.join('-') : params.nights;
-    let msg = `❌ <b>No verified lie-flat flights found</b> under <b>£${budgetCeiling} GBP</b> for <code>${params.destination}</code> (${nightsStr} nights`;
-    if (params.targetMonth) msg += ` in ${params.targetMonth}`;
-    else msg += ` over the next ${monthsWindow} months`;
-    msg += `).\n\n💡 <i>Try widening your month window (e.g. "in the next 6 months") or raising your budget ceiling!</i>`;
+    let msg = `❌ <b>No verified lie-flat flights found</b> under <b>£${budgetCeiling} GBP</b>`;
+    if (isOpen) {
+      msg += ` across the world (${nightsStr} nights over the next ${monthsWindow} months).\n\n💡 <i>Try raising your budget ceiling!</i>`;
+    } else {
+      msg += ` for <code>${params.destination}</code> (${nightsStr} nights`;
+      if (params.targetMonth) msg += ` in ${params.targetMonth}`;
+      else msg += ` over the next ${monthsWindow} months`;
+      msg += `).\n\n💡 <i>Try widening your month window or raising your budget ceiling!</i>`;
+    }
     await sendMessage(chatId, msg);
     return;
   }
@@ -364,42 +437,10 @@ async function executeSearchAndReply(chatId, params) {
   const summaryHtml = formatSearchSummaryHtml(searchResult.searchSummary);
   await sendMessage(chatId, summaryHtml);
 
-  // Send up to top 3 matches
+  // Send up to top 3 matches directly using the user's clean card layout
   for (let i = 0; i < Math.min(3, matches.length); i++) {
     const match = matches[i];
     const dealHtml = formatFlightDealHtml(match, i + 1);
-
-    // Extract both cabinPhoto (upright) and bedPhoto (flat bed) from cabin_photos.mjs
-    const cabinObj = match.cabinPhotos?.cabinPhoto || match.cabinPhotos?.uprightSeatPhoto || {};
-    const bedObj = match.cabinPhotos?.bedPhoto || match.cabinPhotos?.flatBedPhoto || {};
-
-    const uprightUrl = cabinObj.imageUrl || cabinObj.originalImageUrl;
-    const uprightFallbackUrl = cabinObj.originalImageUrl || cabinObj.imageUrl;
-    const bedUrl = bedObj.imageUrl || bedObj.originalImageUrl;
-    const bedFallbackUrl = bedObj.originalImageUrl || bedObj.imageUrl;
-
-    const airlineName =
-      match.cabinPhotos?.airlineNormalized ||
-      (Array.isArray(match.primaryCarriers) ? match.primaryCarriers.join(' / ') : '') ||
-      match.airline ||
-      'Business Class';
-    const aircraftName =
-      match.cabinPhotos?.aircraftNormalized ||
-      match.outbound?.qualifyingLongLegs?.[0]?.aircraft ||
-      match.aircraft ||
-      'Lie-Flat Widebody';
-
-    if (uprightUrl || bedUrl) {
-      await sendChatAction(chatId, 'upload_photo');
-      await sendPhotos(chatId, {
-        uprightUrl,
-        uprightFallbackUrl,
-        bedUrl,
-        bedFallbackUrl,
-        title: `${airlineName} — ${aircraftName}`,
-      });
-    }
-
     await sendMessage(chatId, dealHtml, { disablePreview: true });
   }
 }

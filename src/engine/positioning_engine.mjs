@@ -153,7 +153,7 @@ function summarizePositioningLeg(itin, bufferMins, bufferDirectionLabel) {
  * 3. Prioritizes convenient timings (2.5h - 4.5h sweet-spot transfer window) alongside price, returning 2-3 curated options.
  */
 export async function findLhrPositioningFlights({
-  homeAirport = 'LHR',
+  homeAirport = 'LON',
   hubIata,
   businessOutboundDate, // YYYY-MM-DD
   businessOutboundDepTime, // HH:MM
@@ -164,7 +164,10 @@ export async function findLhrPositioningFlights({
   allowOvernightPositioning = false,
   currency = 'GBP',
 } = {}) {
-  const home = String(homeAirport || 'LHR').trim().toUpperCase();
+  let home = String(homeAirport || 'LON').trim().toUpperCase();
+  if (home === 'LHR' || home === 'LGW' || home === 'STN' || home === 'LTN') {
+    home = 'LON'; // Query all London airports for best prices and timings
+  }
   const hub = String(hubIata || '').trim().toUpperCase();
 
   if (!hub || LONDON_AIRPORTS.has(hub) || home === hub) {

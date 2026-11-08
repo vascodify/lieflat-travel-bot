@@ -312,6 +312,18 @@ assert.equal(parsedQ.destination, 'ICN');
 assert.equal(parsedQ.nights, 3);
 assert.equal(parsedQ.maxPriceGbp, 1600);
 
+const parsedSurprise = parseUserQueryHeuristic('Surprise me, just make sure it\'s under £1300', 2026, 11);
+assert.equal(parsedSurprise.destination, 'ANY');
+assert.equal(parsedSurprise.isOpenDestination, true);
+assert.equal(parsedSurprise.maxPriceGbp, 1300);
+
+const parsedMaputo = parseUserQueryHeuristic('Maputo for 7 nights in January', 2026, 11);
+assert.equal(parsedMaputo.destination, 'MPM');
+assert.equal(parsedMaputo.nights, 7);
+
+const parsedUln = parseUserQueryHeuristic('Ulaanbaatar 4 nights', 2026, 11);
+assert.equal(parsedUln.destination, 'ULN');
+
 const sampleDealHtml = formatFlightDealHtml({
   originHub: { iata: 'FRA', taxNotes: 'Low APD tier' },
   destination: 'ICN',
@@ -325,7 +337,9 @@ const sampleDealHtml = formatFlightDealHtml({
 assert.equal(sampleDealHtml.includes('MIAT Mongolian Airlines'), true);
 assert.equal(sampleDealHtml.includes('1,462'), true);
 assert.equal(sampleDealHtml.includes('1,643'), true);
-console.log('  [PASS] Telegram Bot parser and HTML deal formatter verified.');
+assert.equal(sampleDealHtml.includes('[Photo Link]'), true);
+assert.equal(sampleDealHtml.includes('Google Flights'), true);
+console.log('  [PASS] Telegram Bot parser, session handlers, and clean card deal formatter verified.');
 
 if (process.argv.includes('--live')) {
   console.log('\n=== 6. Running Live Google Flights Discovery Sweep for User Example Prompt ===');

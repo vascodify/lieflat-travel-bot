@@ -70,6 +70,35 @@ const KNOWN_AIRPORT_NAMES = {
   mauritius: 'MRU',
   seychelles: 'SEZ',
   cairo: 'CAI',
+  maputo: 'MPM',
+  mozambique: 'MPM',
+  ulaanbaatar: 'ULN',
+  mongolia: 'ULN',
+  colombo: 'CMB',
+  'sri lanka': 'CMB',
+  panama: 'PTY',
+  'panama city': 'PTY',
+  'san jose': 'SJO',
+  'costa rica': 'SJO',
+  dar: 'DAR',
+  'dar es salaam': 'DAR',
+  tanzania: 'DAR',
+  mombasa: 'MBA',
+  kigali: 'KGL',
+  rwanda: 'KGL',
+  harare: 'HRE',
+  zimbabwe: 'HRE',
+  lusaka: 'LUN',
+  zambia: 'LUN',
+  windhoek: 'WDH',
+  namibia: 'WDH',
+  durban: 'DUR',
+  accra: 'ACC',
+  ghana: 'ACC',
+  lagos: 'LOS',
+  nigeria: 'LOS',
+  'punta cana': 'PUJ',
+  'santo domingo': 'SDQ',
   morocco: 'RAK',
   marrakech: 'RAK',
   casablanca: 'CMN',
@@ -130,7 +159,7 @@ function parseNumberToken(token) {
 
 export async function parseUserQueryWithGemini(
   userText,
-  { geminiApiKey = process.env.GEMINI_API_KEY, modelName = process.env.GEMINI_MODEL || 'gemini-3.5-flash' } = {}
+  { geminiApiKey = process.env.GEMINI_API_KEY, modelName = process.env.GEMINI_MODEL || 'gemini-2.0-flash' } = {}
 ) {
   const now = new Date();
   const currentYear = now.getFullYear();
@@ -140,7 +169,7 @@ export async function parseUserQueryWithGemini(
   const heuristic = parseUserQueryHeuristic(userText, currentYear, currentMonth);
 
   if (geminiApiKey && typeof geminiApiKey === 'string' && geminiApiKey.trim().length > 10) {
-    const candidateModels = [modelName, 'gemini-3.5-flash', 'gemini-3.6-flash'].filter(
+    const candidateModels = [modelName, 'gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-2.5-flash'].filter(
       (m, idx, arr) => arr.indexOf(m) === idx
     );
 
@@ -149,13 +178,14 @@ export async function parseUserQueryWithGemini(
         const prompt = `You are an expert flight search query parser. Extract flight search parameters from the user's message.
 Return ONLY valid JSON matching this exact schema:
 {
-  "destination": "3-letter IATA code or metro code (use NYC for New York/JFK/EWR, LON for London, TYO for Tokyo, ICN for Seoul, BKK for Bangkok, EZE for Buenos Aires, GIG for Rio, EBB for Entebbe/Uganda)",
-  "nights": integer or array of integers (e.g. 4 or [3, 4] if user mentions "3 or 4 nights", "3-4 nights", etc.; default 4),
+  "destination": "3-letter IATA code (use TYO for Tokyo, ICN for Seoul, BKK for Bangkok, EZE for Buenos Aires, GIG for Rio, EBB for Entebbe/Uganda, MPM for Maputo, ULN for Ulaanbaatar, or 'ANY' if user wants 'surprise me', 'anywhere', 'don't care to where')",
+  "isOpenDestination": boolean (true if user asks for 'surprise me', 'anywhere', 'don't care to where', 'wherever', or asks for a deal without specifying a destination),
+  "nights": integer or array of integers (e.g. 4 or [2, 3, 4, 5] if user mentions '2-5 nights' or 'under a week' or 'don't care how long'; default 4),
   "monthsAhead": integer (how many months ahead to search if user says 'in the next X months', e.g. 2, 4, 6; default 2),
-  "targetMonth": "YYYY-MM" (e.g. "2026-12" if a specific month name is requested, null if searching across next X months),
+  "targetMonth": "YYYY-MM" (e.g. "2027-01" if a specific month name is requested, null if searching across next X months),
   "departureDayOfWeek": "Monday" | "Tuesday" | "Wednesday" | "Thursday" | "Friday" | "Saturday" | "Sunday" | null (MUST be null unless user explicitly named a specific departure day in the message),
   "returnDayOfWeek": "Monday" | "Tuesday" | "Wednesday" | "Thursday" | "Friday" | "Saturday" | "Sunday" | null (MUST be null unless user explicitly named a return/arrival day),
-  "maxPriceGbp": number or null (only if user explicitly stated a price/budget cap like 'under 1600' or 'max 1700', otherwise null),
+  "maxPriceGbp": number or null (only if user explicitly stated a price/budget cap like 'under 1300' or 'max 1500', otherwise null),
   "preferLowApd": true,
   "summary": "Brief 1-line plain English summary of what will be searched"
 }
@@ -181,10 +211,16 @@ User message: "${userText}"`;
           const rawJsonText = data?.candidates?.[0]?.content?.parts?.[0]?.text;
           if (rawJsonText) {
             const parsed = JSON.parse(rawJsonText);
-            if (parsed.destination && parsed.destination.length === 3) {
+            const isOpen = Boolean(parsed.isOpenDestination || parsed.destination === 'ANY' || heuristic.isOpenDestination);
+            if (isOpen || parsed.destination === 'ANY') {
+              parsed.destination = 'ANY';
+              parsed.isOpenDestination = true;
+            } else if (parsed.destination && parsed.destination.length === 3) {
               parsed.destination = parsed.destination.toUpperCase();
+              parsed.isOpenDestination = false;
             } else {
               parsed.destination = heuristic.destination || null;
+              parsed.isOpenDestination = heuristic.isOpenDestination || false;
             }
             if (Array.isArray(parsed.nights)) {
               parsed.nights = parsed.nights.map(Number).filter((n) => !Number.isNaN(n) && n > 0);
@@ -301,7 +337,10 @@ export function parseUserQueryHeuristic(userText, currentYear, currentMonth) {
   const text = String(userText).toLowerCase();
   const numberWordPattern = `(?:\\d+|${Object.keys(NUMBER_WORDS).join('|')})`;
 
-  // 1. Destination
+  // 1. Destination & Surprise Me / Open Destination check
+  const openDestRegex = /\b(?:surprise\s+me|anywhere|any\s+destination|don'?t\s+care\s+(?:to\s+where|where|for\s+how\s+long)|wherever|somewhere\s+far|cheap\s+anywhere|surprise)\b/i;
+  let isOpenDestination = openDestRegex.test(text);
+
   let destination = null;
   const iataMatch = userText.match(/\b([A-Z]{3})\b/);
   if (iataMatch && !['FOR', 'THE', 'AND', 'GBP', 'LHR', 'BOT', 'ANY', 'ALL', 'NOT'].includes(iataMatch[1])) {
@@ -316,7 +355,11 @@ export function parseUserQueryHeuristic(userText, currentYear, currentMonth) {
       }
     }
   }
-  // If destination is not detected in text, leave as null (do NOT force to ICN)
+
+  if (!destination && (isOpenDestination || text.includes("don't care") || text.includes('surprise') || text.includes('anywhere'))) {
+    isOpenDestination = true;
+    destination = 'ANY';
+  }
 
   // 2. Months Ahead window (e.g. "in the next 4 months", "next 6 months", "within 3 months")
   let monthsAhead = 2;
@@ -336,28 +379,32 @@ export function parseUserQueryHeuristic(userText, currentYear, currentMonth) {
 
   // 3. Trip length in Nights (e.g. "3 or 4 nights", "3-4 nights", "4 nights")
   let nights = 4;
-  const rangeMatch = text.match(/\b(\d+)\s*(?:to|or|-)\s*(\d+)\s*(?:nights?|days?)\b/i);
-  if (rangeMatch) {
-    const n1 = parseInt(rangeMatch[1], 10);
-    const n2 = parseInt(rangeMatch[2], 10);
-    if (n1 >= 1 && n2 <= 30) {
-      nights = [Math.min(n1, n2), Math.max(n1, n2)];
-    }
+  if (text.includes('1 week') || text.includes('2-5 nights') || text.includes('2 to 5 nights') || text.includes('how long')) {
+    nights = [2, 3, 4, 5];
   } else {
-    const nightsRegex = new RegExp(`\\b(${numberWordPattern})\\s*(?:nights?|days?)\\b`, 'i');
-    const nightsMatch = text.match(nightsRegex);
-    if (nightsMatch) {
-      const val = parseNumberToken(nightsMatch[1]);
-      if (val && val >= 1 && val <= 30) {
-        nights = val;
+    const rangeMatch = text.match(/\b(\d+)\s*(?:to|or|-)\s*(\d+)\s*(?:nights?|days?)\b/i);
+    if (rangeMatch) {
+      const n1 = parseInt(rangeMatch[1], 10);
+      const n2 = parseInt(rangeMatch[2], 10);
+      if (n1 >= 1 && n2 <= 30) {
+        nights = [Math.min(n1, n2), Math.max(n1, n2)];
       }
-    } else if (!hasExplicitMonthsAhead) {
-      // Handle voice-to-text typo like "Buenos Aires for 4 months in December" -> 4 nights
-      const typoNightsMatch = text.match(new RegExp(`\\bfor\\s+(${numberWordPattern})\\s*months?\\s+in\\b`, 'i'));
-      if (typoNightsMatch) {
-        const val = parseNumberToken(typoNightsMatch[1]);
-        if (val && val >= 1 && val <= 14) {
+    } else {
+      const nightsRegex = new RegExp(`\\b(${numberWordPattern})\\s*(?:nights?|days?)\\b`, 'i');
+      const nightsMatch = text.match(nightsRegex);
+      if (nightsMatch) {
+        const val = parseNumberToken(nightsMatch[1]);
+        if (val && val >= 1 && val <= 30) {
           nights = val;
+        }
+      } else if (!hasExplicitMonthsAhead) {
+        // Handle voice-to-text typo like "Buenos Aires for 4 months in December" -> 4 nights
+        const typoNightsMatch = text.match(new RegExp(`\\bfor\\s+(${numberWordPattern})\\s*months?\\s+in\\b`, 'i'));
+        if (typoNightsMatch) {
+          const val = parseNumberToken(typoNightsMatch[1]);
+          if (val && val >= 1 && val <= 14) {
+            nights = val;
+          }
         }
       }
     }
@@ -414,6 +461,7 @@ export function parseUserQueryHeuristic(userText, currentYear, currentMonth) {
 
   return {
     destination,
+    isOpenDestination,
     nights,
     monthsAhead,
     targetMonth,
@@ -422,8 +470,10 @@ export function parseUserQueryHeuristic(userText, currentYear, currentMonth) {
     maxPriceGbp,
     explicitBudget,
     preferLowApd: true,
-    summary: destination
-      ? `Lie-flat to ${destination} for ${nights} nights${
+    summary: isOpenDestination
+      ? `Surprise lie-flat deals (${Array.isArray(nights) ? nights.join('-') : nights} nights) [max £${maxPriceGbp} GBP]`
+      : destination
+      ? `Lie-flat to ${destination} for ${Array.isArray(nights) ? nights.join('-') : nights} nights${
           targetMonth ? ` in ${targetMonth}` : ` (next ${monthsAhead} months)`
         }${explicitBudget ? ` [max £${maxPriceGbp} GBP]` : ''}`
       : `Flight search query (${nights} nights)`,

@@ -82,7 +82,7 @@ export async function orchestrateLieFlatSearch({
   includeCabinPhotos = true,
   photoDownloadDir = null,
   includeLhrPositioning = true,
-  homeAirport = 'LHR',
+  homeAirport = 'LON',
   minPositioningBufferHours = 2.5,
   concurrency = 8,
   maxResults = 15,

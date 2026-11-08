@@ -256,7 +256,10 @@ export function resolveOriginHubs({ origins, preferLowApd = true, maxHubs = 6 })
  */
 export function resolveDestinations({ destinations, regions, maxDestinations = 8 }) {
   if (Array.isArray(destinations) && destinations.length > 0) {
-    return destinations.map((d) => String(d).trim().toUpperCase());
+    const cleaned = destinations.map((d) => String(d).trim().toUpperCase()).filter((d) => d && d !== 'ANY');
+    if (cleaned.length > 0) {
+      return cleaned;
+    }
   }
 
   let pool = [];
@@ -272,23 +275,20 @@ export function resolveDestinations({ destinations, regions, maxDestinations = 8
   }
 
   if (pool.length === 0) {
-    // High-yield balanced mix across North America, Latin America, Asia, and Africa
+    // High-yield balanced far destinations across North America, Latin America, Africa, and Asia (excluding Middle East)
     pool = [
       'JFK',
       'BOS',
-      'IAD',
-      'ORD',
       'MIA',
-      'YYZ',
+      'ORD',
       'BOG',
       'GRU',
+      'NBO',
+      'JNB',
+      'EBB',
       'BKK',
       'SIN',
-      'HKG',
-      'ICN',
-      'PVG',
-      'JNB',
-      'DXB',
+      'TYO',
     ];
   }
 

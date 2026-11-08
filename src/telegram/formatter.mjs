@@ -1,13 +1,36 @@
 /**
  * Formatter for Telegram & Antigravity messages.
- * Implements the user's exact clean, non-cluttered flight card layout:
- * - Single best recommended LHR connection
- * - DD/MM/YYYY dates + 12-hour AM/PM times
- * - Hours & minutes flight durations and buffers
- * - Explicit "- Number of nights at [Destination] = # -"
- * - Photo 1 (Upright seat) & Photo 2 (Lie-flat bed) clickable verification links
- * - Clickable live OTA booking links
+ * Implements the user's exact clean card layout:
+ *
+ * Option 1  ➡️ £1,800 🗓️ Jan 3 to Jan 8 (2027)
+ * ✈️ £300 positioning + £1,500 Biz  🛏️
+ *
+ * LHR to LIS with BA A320neo (9:05am to 12:05pm)
+ * [Photo Link]
+ *
+ * - 4 hours 40 minutes buffer -
+ *
+ * Jan 3 @ 4:45pm
+ * LIS to BKK @ 4:45pm (10 hours flight), arriving @ Jan 4 @ 7:00am with Airline Aircraft (Seat Type)
+ * [Photo Link]
+ *
+ * - Number of nights at BKK = 4 -
+ *
+ * Jan 8 @ 8:30am
+ * BKK to LIS (11 hours flight), arriving @ Jan 8 @ 4:00pm with Airline Aircraft (Seat Type)
+ * [Photo Link]
+ *
+ * - 3 hours 20 minutes buffer -
+ *
+ * LIS to LHR with BA A321neo (6:20am to 8:20am)
+ * [Photo Link]
+ *
+ * 🔗 Live Booking:
+ * • Business Class (LIS ⇄ BKK): [Google Flights]
+ * • London Positioning (LHR ⇄ LIS): [Google Flights]
  */
+
+const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 function escapeHtml(str) {
   if (str === null || str === undefined) return '';
@@ -25,7 +48,21 @@ export function toUkDate(isoDate) {
   return `${dd}/${mm}/${yyyy}`;
 }
 
-export function toAmPm(timeStr) {
+export function toShortDate(isoDate) {
+  if (!isoDate) return '';
+  const parts = String(isoDate).trim().split('-');
+  if (parts.length < 3) return isoDate;
+  const mm = parseInt(parts[1], 10);
+  const dd = parseInt(parts[2], 10);
+  return `${MONTH_SHORT[mm - 1] || parts[1]} ${dd}`;
+}
+
+export function getYear(isoDate) {
+  if (!isoDate) return new Date().getFullYear();
+  return String(isoDate).trim().split('-')[0];
+}
+
+export function toAmPmLower(timeStr) {
   if (!timeStr) return '';
   const clean = String(timeStr).trim();
   const parts = clean.split(':');
@@ -33,10 +70,14 @@ export function toAmPm(timeStr) {
   let h = parseInt(parts[0], 10);
   const m = parts[1].slice(0, 2);
   if (isNaN(h)) return clean;
-  const period = h >= 12 ? 'PM' : 'AM';
+  const period = h >= 12 ? 'pm' : 'am';
   h = h % 12;
   if (h === 0) h = 12;
-  return `${String(h).padStart(2, '0')}:${m} ${period}`;
+  return `${h}:${m}${period}`;
+}
+
+export function toAmPm(timeStr) {
+  return toAmPmLower(timeStr);
 }
 
 export function formatHoursMinutes(mins) {
@@ -50,59 +91,9 @@ export function formatHoursMinutes(mins) {
   return hPart || mPart || '0 minutes';
 }
 
-function formatOtaDeepLinks(bookingLinks) {
-  if (!bookingLinks) return '';
-  const links = [];
-  const gf = bookingLinks.googleFlights;
-  const sky = bookingLinks.skyscannerOtaComparison || bookingLinks.skyscanner;
-  const trip = bookingLinks.tripCom;
-  const kayak = bookingLinks.kayakUk || bookingLinks.kayak;
-  const momondo = bookingLinks.momondoUk || bookingLinks.momondo;
-  const lastmin = bookingLinks.lastminuteCom || bookingLinks.lastminute;
-
-  if (gf) links.push(`<a href="${escapeHtml(gf)}">Google Flights (Live OTA)</a>`);
-  if (sky) links.push(`<a href="${escapeHtml(sky)}">Skyscanner</a>`);
-  if (trip) links.push(`<a href="${escapeHtml(trip)}">Trip.com UK</a>`);
-  if (kayak) links.push(`<a href="${escapeHtml(kayak)}">Kayak UK</a>`);
-  if (momondo) links.push(`<a href="${escapeHtml(momondo)}">Momondo UK</a>`);
-  if (lastmin) links.push(`<a href="${escapeHtml(lastmin)}">Lastminute.com</a>`);
-  return links.join(' | ');
-}
-
-export function formatLegPhotosHtml(photos) {
-  const cabinObj = photos?.cabinPhoto || photos?.uprightSeatPhoto || {};
-  const bedObj = photos?.bedPhoto || photos?.flatBedPhoto || {};
-  const uprightUrl = cabinObj.imageUrl || cabinObj.originalImageUrl;
-  const bedUrl = bedObj.imageUrl || bedObj.originalImageUrl;
-
-  if (uprightUrl && bedUrl) {
-    return `<a href="${escapeHtml(uprightUrl)}">[Photo 1 showing upright seat]</a>  <a href="${escapeHtml(bedUrl)}">[Photo 2 showing bed position]</a>`;
-  }
-  if (uprightUrl) {
-    return `<a href="${escapeHtml(uprightUrl)}">[Photo 1 showing upright seat]</a>`;
-  }
-  if (bedUrl) {
-    return `<a href="${escapeHtml(bedUrl)}">[Photo 2 showing bed position]</a>`;
-  }
-  return `<i>[Photo 1 showing upright seat] [Photo 2 showing bed position]</i>`;
-}
-
-export function formatLegPhotosMarkdown(photos) {
-  const cabinObj = photos?.cabinPhoto || photos?.uprightSeatPhoto || {};
-  const bedObj = photos?.bedPhoto || photos?.flatBedPhoto || {};
-  const uprightUrl = cabinObj.imageUrl || cabinObj.originalImageUrl;
-  const bedUrl = bedObj.imageUrl || bedObj.originalImageUrl;
-
-  if (uprightUrl && bedUrl) {
-    return `[Photo 1 showing upright seat](${uprightUrl}) [Photo 2 showing bed position](${bedUrl})`;
-  }
-  if (uprightUrl) {
-    return `[Photo 1 showing upright seat](${uprightUrl})`;
-  }
-  if (bedUrl) {
-    return `[Photo 2 showing bed position](${bedUrl})`;
-  }
-  return `*[Photo 1 showing upright seat] [Photo 2 showing bed position]*`;
+export function buildGoogleImagesUrl(carrier, aircraft) {
+  const query = `${carrier || ''} ${aircraft || ''} Business class`.trim().replace(/\s+/g, ' ');
+  return `https://www.google.com/search?tbm=isch&q=${encodeURIComponent(query)}`;
 }
 
 export function formatFlightDealHtml(match, index = 1) {
@@ -121,9 +112,7 @@ export function formatFlightDealHtml(match, index = 1) {
     'Business Class';
   const bizAircraft = outboundLeg.aircraft || match.aircraft || 'Lie-Flat Widebody';
 
-  const returnBizAirline =
-    inboundLeg.carrier ||
-    bizAirline;
+  const returnBizAirline = inboundLeg.carrier || bizAirline;
   const returnBizAircraft = inboundLeg.aircraft || bizAircraft;
 
   // Pricing
@@ -132,7 +121,7 @@ export function formatFlightDealHtml(match, index = 1) {
     match.pricing?.businessRoundTripGbp ??
     0;
 
-  // Single Best LHR Positioning Flight (Recommended Pair)
+  // Positioning details (handles LHR, LGW, LTN, STN)
   const posOptions = Array.isArray(match.lhrPositioning?.options)
     ? match.lhrPositioning.options
     : match.lhrPositioning?.recommendedPair
@@ -146,95 +135,63 @@ export function formatFlightDealHtml(match, index = 1) {
     match.pricing?.positioningReturnGbp ??
     0;
 
-  const totalCostVal =
-    match.combinedTotalWithRecommendedLhrPositioningGbp ??
-    (bizPriceVal + posPriceVal);
+  const isLondonDirect =
+    ['LHR', 'LGW', 'LCY', 'STN', 'LTN', 'LON'].includes(hubIata) ||
+    match.lhrPositioning?.positioningNeeded === false;
+
+  const totalCostVal = isLondonDirect
+    ? bizPriceVal
+    : (match.combinedTotalWithRecommendedLhrPositioningGbp ?? (bizPriceVal + posPriceVal));
 
   const totalCostStr = `£${totalCostVal.toLocaleString('en-GB')}`;
   const posCostStr = `£${posPriceVal.toLocaleString('en-GB')}`;
   const bizCostStr = `£${bizPriceVal.toLocaleString('en-GB')}`;
 
-  // Cabin Photos
-  const cabinObj = match.cabinPhotos?.cabinPhoto || match.cabinPhotos?.uprightSeatPhoto || {};
-  const bedObj = match.cabinPhotos?.bedPhoto || match.cabinPhotos?.flatBedPhoto || {};
-  const uprightUrl = cabinObj.imageUrl || cabinObj.originalImageUrl;
-  const bedUrl = bedObj.imageUrl || bedObj.originalImageUrl;
-
-  const photoLinksStr =
-    uprightUrl && bedUrl
-      ? `<a href="${escapeHtml(uprightUrl)}">[Photo 1 showing upright seat]</a>  <a href="${escapeHtml(bedUrl)}">[Photo 2 showing bed position]</a>`
-      : uprightUrl
-      ? `<a href="${escapeHtml(uprightUrl)}">[Photo 1 showing upright seat]</a>`
-      : bedUrl
-      ? `<a href="${escapeHtml(bedUrl)}">[Photo 2 showing bed position]</a>`
-      : `<i>[Photo 1 showing upright seat] [Photo 2 showing bed position]</i>`;
-
-  // Best LHR Positioning Details
   const lhrOut = bestPos?.outboundEconomyPositioning || bestPos?.outboundFlight || {};
   const lhrIn = bestPos?.inboundEconomyPositioning || bestPos?.returnFlight || {};
+
+  const posOrigin = lhrOut.origin || 'LHR';
+  const posDest = lhrIn.destination || 'LHR';
 
   const lhrOutAirline =
     (Array.isArray(lhrOut.airlines) ? lhrOut.airlines[0] : lhrOut.carrier || lhrOut.airline) || 'British Airways';
   const lhrOutAircraft = lhrOut.aircraft || 'Airbus A320';
-  const lhrOutDate = toUkDate(lhrOut.departureDate || match.outbound?.departureDate);
-  const lhrOutDepTime = toAmPm(lhrOut.departureTime || lhrOut.departs || '09:00');
-  const lhrOutArrTime = toAmPm(lhrOut.arrivalTime || lhrOut.arrives || '12:00');
+  const lhrOutDepTime = toAmPmLower(lhrOut.departureTime || lhrOut.departs || '09:05');
+  const lhrOutArrTime = toAmPmLower(lhrOut.arrivalTime || lhrOut.arrives || '12:05');
 
   const lhrInAirline =
     (Array.isArray(lhrIn.airlines) ? lhrIn.airlines[0] : lhrIn.carrier || lhrIn.airline) || lhrOutAirline;
   const lhrInAircraft = lhrIn.aircraft || lhrOutAircraft;
-  const lhrInDate = toUkDate(lhrIn.departureDate || match.inbound?.arrivalDate || match.inbound?.departureDate);
-  const lhrInDepTime = toAmPm(lhrIn.departureTime || lhrIn.departs || '09:00');
-  const lhrInArrTime = toAmPm(lhrIn.arrivalTime || lhrIn.arrives || '10:30');
+  const lhrInDepTime = toAmPmLower(lhrIn.departureTime || lhrIn.departs || '06:20');
+  const lhrInArrTime = toAmPmLower(lhrIn.arrivalTime || lhrIn.arrives || '08:20');
 
-  // Buffers between flights
+  // Buffers
   const outBufferMins = lhrOut.transferBufferMins ?? 160;
   const inBufferMins = lhrIn.transferBufferMins ?? 250;
   const outBufferText = `- ${formatHoursMinutes(outBufferMins)} buffer -`;
   const inBufferText = `- ${formatHoursMinutes(inBufferMins)} buffer -`;
 
-  // Outbound Business Flight Details
-  const outBizDate = toUkDate(match.outbound?.departureDate);
-  const outBizDepTime = toAmPm(match.outbound?.departureTime || '14:00');
-  const outBizArrDate = toUkDate(match.outbound?.arrivalDate || match.outbound?.departureDate);
-  const outBizArrTime = toAmPm(match.outbound?.arrivalTime || '07:00');
-  const outBizDuration = formatHoursMinutes(
-    match.outbound?.totalDurationMins || (outboundLeg.durationMins ?? 720)
-  );
+  // Dates
+  const outBizDateIso = match.outbound?.departureDate;
+  const inBizDateIso = match.inbound?.departureDate || match.inbound?.arrivalDate;
+  const outDateShort = toShortDate(lhrOut.departureDate || outBizDateIso);
+  const inDateShort = toShortDate(lhrIn.arrivalDate || inBizDateIso);
+  const yearStr = getYear(outBizDateIso || lhrOut.departureDate);
 
-  // Nights spent at long-haul destination
-  const nightsNum =
-    match.nightsAtDestination ||
-    match.dates?.nights ||
-    4;
+  const nightsNum = match.nightsAtDestination || match.dates?.nights || 4;
 
-  // Inbound Business Flight Details
-  const inBizDate = toUkDate(match.inbound?.departureDate);
-  const inBizDepTime = toAmPm(match.inbound?.departureTime || '14:00');
-  const inBizArrDate = toUkDate(match.inbound?.arrivalDate || match.inbound?.departureDate);
-  const inBizArrTime = toAmPm(match.inbound?.arrivalTime || '06:00');
-  const inBizDuration = formatHoursMinutes(
-    match.inbound?.totalDurationMins || (inboundLeg.durationMins ?? 720)
-  );
-
-  const isLondonDirect =
-    ['LHR', 'LGW', 'LCY', 'STN', 'LTN'].includes(hubIata) ||
-    !bestPos ||
-    match.lhrPositioning?.positioningNeeded === false;
-
-  // Build the user's exact clean card layout
-  let card = '';
+  // Build the Header
+  let card = `<b>Option ${index}  ➡️ ${totalCostStr} 🗓️ ${escapeHtml(outDateShort)} to ${escapeHtml(inDateShort)} (${yearStr})</b>\n`;
   if (isLondonDirect) {
-    card += `<b>Option ${index} for ${bizCostStr} Total cost (Departing London)</b>\n`;
-    card += `${escapeHtml(outBizDate)} @ ${escapeHtml(outBizDepTime)}\n`;
+    card += `✈️ <b>Direct flight from London (No positioning required)  🛏️</b>\n\n`;
   } else {
-    card += `<b>Option ${index} for ${totalCostStr} Total cost (${posCostStr} recommended LHR connection + ${bizCostStr} Biz flights)</b>\n`;
-    card += `${escapeHtml(lhrOutDate)} @ ${escapeHtml(lhrOutDepTime)}\n`;
-    card += `LHR to ${escapeHtml(hubIata)} arriving ${escapeHtml(lhrOutArrTime)} with ${escapeHtml(lhrOutAirline)} ${escapeHtml(lhrOutAircraft)}\n\n`;
+    card += `✈️ <b>${posCostStr} positioning + ${bizCostStr} Biz  🛏️</b>\n\n`;
+    card += `${escapeHtml(posOrigin)} to ${escapeHtml(hubIata)} with ${escapeHtml(lhrOutAirline)} ${escapeHtml(lhrOutAircraft)} (${escapeHtml(lhrOutDepTime)} to ${escapeHtml(lhrOutArrTime)})\n`;
+    card += `<a href="${escapeHtml(buildGoogleImagesUrl(lhrOutAirline, lhrOutAircraft))}">[Photo Link]</a>\n\n`;
     card += `<i>${escapeHtml(outBufferText)}</i>\n\n`;
   }
 
-  // Outbound Business Flight Legs (handles direct as well as 1+ stopovers with individual photos & buffers)
+  // Outbound Business Flight Legs
   const outLegs =
     match.outbound?.legs && match.outbound.legs.length > 0
       ? match.outbound.legs
@@ -246,26 +203,26 @@ export function formatFlightDealHtml(match, index = 1) {
             departureTime: match.outbound?.departureTime,
             arrivalDate: match.outbound?.arrivalDate || match.outbound?.departureDate,
             arrivalTime: match.outbound?.arrivalTime,
-            durationMins:
-              match.outbound?.totalDurationMins || (outboundLeg.durationMins ?? 720),
+            durationMins: match.outbound?.totalDurationMins || (outboundLeg.durationMins ?? 720),
             carrier: bizAirline,
             aircraft: bizAircraft,
             seatType: outboundLeg.seatType || 'True 180° Lie-Flat Seat',
-            cabinPhotos: match.cabinPhotos,
           },
         ];
   const outLayovers = match.outbound?.layovers || [];
 
   outLegs.forEach((leg, idx) => {
-    const legDepTime = toAmPm(leg.departureTime || '14:00');
-    const legArrDate = toUkDate(leg.arrivalDate || leg.departureDate);
-    const legArrTime = toAmPm(leg.arrivalTime || '07:00');
+    const legDateShort = toShortDate(leg.departureDate);
+    const legDepTime = toAmPmLower(leg.departureTime || '14:00');
+    const legArrDateShort = toShortDate(leg.arrivalDate || leg.departureDate);
+    const legArrTime = toAmPmLower(leg.arrivalTime || '07:00');
     const legDuration = formatHoursMinutes(leg.durationMins);
     const legSeatType = leg.seatType ? ` (${escapeHtml(leg.seatType)})` : '';
-    const legPhotosStr = formatLegPhotosHtml(leg.cabinPhotos || match.cabinPhotos);
+    const photoUrl = buildGoogleImagesUrl(leg.carrier, leg.aircraft);
 
-    card += `${escapeHtml(leg.from)} to ${escapeHtml(leg.to)} @ ${escapeHtml(legDepTime)} (${escapeHtml(legDuration)} flight), arriving @ ${escapeHtml(legArrDate)} @ ${escapeHtml(legArrTime)} with ${escapeHtml(leg.carrier)} ${escapeHtml(leg.aircraft)}${legSeatType}\n`;
-    card += `${legPhotosStr}\n\n`;
+    card += `${escapeHtml(legDateShort)} @ ${escapeHtml(legDepTime)}\n`;
+    card += `${escapeHtml(leg.from)} to ${escapeHtml(leg.to)} (${escapeHtml(legDuration)} flight), arriving @ ${escapeHtml(legArrDateShort)} @ ${escapeHtml(legArrTime)} with ${escapeHtml(leg.carrier)} ${escapeHtml(leg.aircraft)}${legSeatType}\n`;
+    card += `<a href="${escapeHtml(photoUrl)}">[Photo Link]</a>\n\n`;
 
     if (idx < outLegs.length - 1) {
       const lay = outLayovers[idx];
@@ -277,7 +234,7 @@ export function formatFlightDealHtml(match, index = 1) {
 
   card += `<b>- Number of nights at ${escapeHtml(destination)} = ${escapeHtml(nightsNum)} -</b>\n\n`;
 
-  // Inbound Business Flight Legs (handles direct as well as 1+ stopovers with individual photos & buffers)
+  // Inbound Business Flight Legs
   const inLegs =
     match.inbound?.legs && match.inbound.legs.length > 0
       ? match.inbound.legs
@@ -289,30 +246,26 @@ export function formatFlightDealHtml(match, index = 1) {
             departureTime: match.inbound?.departureTime,
             arrivalDate: match.inbound?.arrivalDate || match.inbound?.departureDate,
             arrivalTime: match.inbound?.arrivalTime,
-            durationMins:
-              match.inbound?.totalDurationMins || (inboundLeg.durationMins ?? 720),
+            durationMins: match.inbound?.totalDurationMins || (inboundLeg.durationMins ?? 720),
             carrier: returnBizAirline,
             aircraft: returnBizAircraft,
             seatType: inboundLeg.seatType || 'True 180° Lie-Flat Seat',
-            cabinPhotos: match.cabinPhotos,
           },
         ];
   const inLayovers = match.inbound?.layovers || [];
 
-  const inFirstLegDepDate = toUkDate(inLegs[0]?.departureDate || match.inbound?.departureDate);
-  const inFirstLegDepTime = toAmPm(inLegs[0]?.departureTime || match.inbound?.departureTime || '14:00');
-  card += `${escapeHtml(inFirstLegDepDate)} @ ${escapeHtml(inFirstLegDepTime)}\n`;
-
   inLegs.forEach((leg, idx) => {
-    const legDepTime = toAmPm(leg.departureTime || '14:00');
-    const legArrDate = toUkDate(leg.arrivalDate || leg.departureDate);
-    const legArrTime = toAmPm(leg.arrivalTime || '06:00');
+    const legDateShort = toShortDate(leg.departureDate);
+    const legDepTime = toAmPmLower(leg.departureTime || '14:00');
+    const legArrDateShort = toShortDate(leg.arrivalDate || leg.departureDate);
+    const legArrTime = toAmPmLower(leg.arrivalTime || '06:00');
     const legDuration = formatHoursMinutes(leg.durationMins);
     const legSeatType = leg.seatType ? ` (${escapeHtml(leg.seatType)})` : '';
-    const legPhotosStr = formatLegPhotosHtml(leg.cabinPhotos || match.cabinPhotos);
+    const photoUrl = buildGoogleImagesUrl(leg.carrier, leg.aircraft);
 
-    card += `${escapeHtml(leg.from)} to ${escapeHtml(leg.to)} (${escapeHtml(legDuration)} flight), arriving @ ${escapeHtml(legArrDate)} @ ${escapeHtml(legArrTime)} with ${escapeHtml(leg.carrier)} ${escapeHtml(leg.aircraft)}${legSeatType}\n`;
-    card += `${legPhotosStr}\n\n`;
+    card += `${escapeHtml(legDateShort)} @ ${escapeHtml(legDepTime)}\n`;
+    card += `${escapeHtml(leg.from)} to ${escapeHtml(leg.to)} (${escapeHtml(legDuration)} flight), arriving @ ${escapeHtml(legArrDateShort)} @ ${escapeHtml(legArrTime)} with ${escapeHtml(leg.carrier)} ${escapeHtml(leg.aircraft)}${legSeatType}\n`;
+    card += `<a href="${escapeHtml(photoUrl)}">[Photo Link]</a>\n\n`;
 
     if (idx < inLegs.length - 1) {
       const lay = inLayovers[idx];
@@ -322,18 +275,20 @@ export function formatFlightDealHtml(match, index = 1) {
     }
   });
 
-  if (!isLondonDirect) {
+  if (!isLondonDirect && bestPos) {
     card += `<i>${escapeHtml(inBufferText)}</i>\n\n`;
-    card += `${escapeHtml(hubIata)} to LHR arriving ${escapeHtml(lhrInArrTime)} with ${escapeHtml(lhrInAirline)} ${escapeHtml(lhrInAircraft)}\n`;
+    card += `${escapeHtml(hubIata)} to ${escapeHtml(posDest)} with ${escapeHtml(lhrInAirline)} ${escapeHtml(lhrInAircraft)} (${escapeHtml(lhrInDepTime)} to ${escapeHtml(lhrInArrTime)})\n`;
+    card += `<a href="${escapeHtml(buildGoogleImagesUrl(lhrInAirline, lhrInAircraft))}">[Photo Link]</a>\n\n`;
   }
 
-  // Live Booking Deep Links
-  card += `\n🔗 <b>Live Booking Links:</b>\n`;
-  if (match.bookingLinks) {
-    card += `• <b>Business Class (${escapeHtml(hubIata)} ⇄ ${escapeHtml(destination)}):</b> ${formatOtaDeepLinks(match.bookingLinks)}\n`;
+  // Live Booking Link - Google Flights Only
+  card += `🔗 <b>Live Booking:</b>\n`;
+  if (match.bookingLinks?.googleFlights) {
+    const bizLabel = isLondonDirect ? `Business Class (${destination})` : `Business Class (${hubIata} ⇄ ${destination})`;
+    card += `• <b>${escapeHtml(bizLabel)}:</b> <a href="${escapeHtml(match.bookingLinks.googleFlights)}">[Google Flights]</a>\n`;
   }
-  if (!isLondonDirect && bestPos?.bookingLinks) {
-    card += `• <b>LHR Positioning (LHR ⇄ ${escapeHtml(hubIata)}):</b> ${formatOtaDeepLinks(bestPos.bookingLinks)}\n`;
+  if (!isLondonDirect && bestPos?.bookingLinks?.googleFlights) {
+    card += `• <b>London Positioning (${escapeHtml(posOrigin)} ⇄ ${escapeHtml(hubIata)}):</b> <a href="${escapeHtml(bestPos.bookingLinks.googleFlights)}">[Google Flights]</a>\n`;
   }
 
   return card;
@@ -355,9 +310,7 @@ export function formatFlightDealMarkdown(match, index = 1) {
     'Business Class';
   const bizAircraft = outboundLeg.aircraft || match.aircraft || 'Lie-Flat Widebody';
 
-  const returnBizAirline =
-    inboundLeg.carrier ||
-    bizAirline;
+  const returnBizAirline = inboundLeg.carrier || bizAirline;
   const returnBizAircraft = inboundLeg.aircraft || bizAircraft;
 
   // Pricing
@@ -366,7 +319,6 @@ export function formatFlightDealMarkdown(match, index = 1) {
     match.pricing?.businessRoundTripGbp ??
     0;
 
-  // Single Best LHR Positioning Flight (Recommended Pair)
   const posOptions = Array.isArray(match.lhrPositioning?.options)
     ? match.lhrPositioning.options
     : match.lhrPositioning?.recommendedPair
@@ -380,84 +332,62 @@ export function formatFlightDealMarkdown(match, index = 1) {
     match.pricing?.positioningReturnGbp ??
     0;
 
-  const totalCostVal =
-    match.combinedTotalWithRecommendedLhrPositioningGbp ??
-    (bizPriceVal + posPriceVal);
+  const isLondonDirect =
+    ['LHR', 'LGW', 'LCY', 'STN', 'LTN', 'LON'].includes(hubIata) ||
+    match.lhrPositioning?.positioningNeeded === false;
+
+  const totalCostVal = isLondonDirect
+    ? bizPriceVal
+    : (match.combinedTotalWithRecommendedLhrPositioningGbp ?? (bizPriceVal + posPriceVal));
 
   const totalCostStr = `£${totalCostVal.toLocaleString('en-GB')}`;
   const posCostStr = `£${posPriceVal.toLocaleString('en-GB')}`;
   const bizCostStr = `£${bizPriceVal.toLocaleString('en-GB')}`;
 
-  // Cabin Photos
-  const cabinObj = match.cabinPhotos?.cabinPhoto || match.cabinPhotos?.uprightSeatPhoto || {};
-  const bedObj = match.cabinPhotos?.bedPhoto || match.cabinPhotos?.flatBedPhoto || {};
-  const uprightUrl = cabinObj.imageUrl || cabinObj.originalImageUrl;
-  const bedUrl = bedObj.imageUrl || bedObj.originalImageUrl;
-
-  const photoLinksStr =
-    uprightUrl && bedUrl
-      ? `[Photo 1 showing upright seat](${uprightUrl}) [Photo 2 showing bed position](${bedUrl})`
-      : uprightUrl
-      ? `[Photo 1 showing upright seat](${uprightUrl})`
-      : bedUrl
-      ? `[Photo 2 showing bed position](${bedUrl})`
-      : `*[Photo 1 showing upright seat] [Photo 2 showing bed position]*`;
-
-  // Best LHR Positioning Details
   const lhrOut = bestPos?.outboundEconomyPositioning || bestPos?.outboundFlight || {};
   const lhrIn = bestPos?.inboundEconomyPositioning || bestPos?.returnFlight || {};
+
+  const posOrigin = lhrOut.origin || 'LHR';
+  const posDest = lhrIn.destination || 'LHR';
 
   const lhrOutAirline =
     (Array.isArray(lhrOut.airlines) ? lhrOut.airlines[0] : lhrOut.carrier || lhrOut.airline) || 'British Airways';
   const lhrOutAircraft = lhrOut.aircraft || 'Airbus A320';
-  const lhrOutDate = toUkDate(lhrOut.departureDate || match.outbound?.departureDate);
-  const lhrOutDepTime = toAmPm(lhrOut.departureTime || lhrOut.departs || '09:00');
-  const lhrOutArrTime = toAmPm(lhrOut.arrivalTime || lhrOut.arrives || '12:00');
+  const lhrOutDepTime = toAmPmLower(lhrOut.departureTime || lhrOut.departs || '09:05');
+  const lhrOutArrTime = toAmPmLower(lhrOut.arrivalTime || lhrOut.arrives || '12:05');
 
   const lhrInAirline =
     (Array.isArray(lhrIn.airlines) ? lhrIn.airlines[0] : lhrIn.carrier || lhrIn.airline) || lhrOutAirline;
   const lhrInAircraft = lhrIn.aircraft || lhrOutAircraft;
-  const lhrInDate = toUkDate(lhrIn.departureDate || match.inbound?.arrivalDate || match.inbound?.departureDate);
-  const lhrInDepTime = toAmPm(lhrIn.departureTime || lhrIn.departs || '09:00');
-  const lhrInArrTime = toAmPm(lhrIn.arrivalTime || lhrIn.arrives || '10:30');
+  const lhrInDepTime = toAmPmLower(lhrIn.departureTime || lhrIn.departs || '06:20');
+  const lhrInArrTime = toAmPmLower(lhrIn.arrivalTime || lhrIn.arrives || '08:20');
 
-  // Buffers between flights
+  // Buffers
   const outBufferMins = lhrOut.transferBufferMins ?? 160;
   const inBufferMins = lhrIn.transferBufferMins ?? 250;
   const outBufferText = `- ${formatHoursMinutes(outBufferMins)} buffer -`;
   const inBufferText = `- ${formatHoursMinutes(inBufferMins)} buffer -`;
 
-  // Outbound Business Flight Details
-  const outBizDate = toUkDate(match.outbound?.departureDate);
-  const outBizDepTime = toAmPm(match.outbound?.departureTime || '14:00');
-  const outBizArrDate = toUkDate(match.outbound?.arrivalDate || match.outbound?.departureDate);
-  const outBizArrTime = toAmPm(match.outbound?.arrivalTime || '07:00');
-  const outBizDuration = formatHoursMinutes(
-    match.outbound?.totalDurationMins || (outboundLeg.durationMins ?? 720)
-  );
+  // Dates
+  const outBizDateIso = match.outbound?.departureDate;
+  const inBizDateIso = match.inbound?.departureDate || match.inbound?.arrivalDate;
+  const outDateShort = toShortDate(lhrOut.departureDate || outBizDateIso);
+  const inDateShort = toShortDate(lhrIn.arrivalDate || inBizDateIso);
+  const yearStr = getYear(outBizDateIso || lhrOut.departureDate);
 
-  // Nights spent at long-haul destination
-  const nightsNum =
-    match.nightsAtDestination ||
-    match.dates?.nights ||
-    4;
+  const nightsNum = match.nightsAtDestination || match.dates?.nights || 4;
 
-  // Inbound Business Flight Details
-  const inBizDate = toUkDate(match.inbound?.departureDate);
-  const inBizDepTime = toAmPm(match.inbound?.departureTime || '14:00');
-  const inBizArrDate = toUkDate(match.inbound?.arrivalDate || match.inbound?.departureDate);
-  const inBizArrTime = toAmPm(match.inbound?.arrivalTime || '06:00');
-  const inBizDuration = formatHoursMinutes(
-    match.inbound?.totalDurationMins || (inboundLeg.durationMins ?? 720)
-  );
+  let card = `### Option ${index}  ➡️ ${totalCostStr} 🗓️ ${outDateShort} to ${inDateShort} (${yearStr})\n`;
+  if (isLondonDirect) {
+    card += `✈️ Direct flight from London (No positioning required)  🛏️\n\n`;
+  } else {
+    card += `✈️ ${posCostStr} positioning + ${bizCostStr} Biz  🛏️\n\n`;
+    card += `${posOrigin} to ${hubIata} with ${lhrOutAirline} ${lhrOutAircraft} (${lhrOutDepTime} to ${lhrOutArrTime})\n`;
+    card += `[Photo Link](${buildGoogleImagesUrl(lhrOutAirline, lhrOutAircraft)})\n\n`;
+    card += `*${outBufferText}*\n\n`;
+  }
 
-  // Build the user's exact clean card layout
-  let card = `### Option ${index} for ${totalCostStr} Total cost (${posCostStr} recommended LHR connection + ${bizCostStr} Biz flights)\n\n`;
-  card += `${lhrOutDate} @ ${lhrOutDepTime}\n`;
-  card += `LHR to ${hubIata} arriving ${lhrOutArrTime} with ${lhrOutAirline} ${lhrOutAircraft}\n\n`;
-  card += `*${outBufferText}*\n\n`;
-
-  // Outbound Business Flight Legs (handles direct as well as 1+ stopovers with individual photos & buffers)
+  // Outbound Business Flight Legs
   const outLegs =
     match.outbound?.legs && match.outbound.legs.length > 0
       ? match.outbound.legs
@@ -469,26 +399,26 @@ export function formatFlightDealMarkdown(match, index = 1) {
             departureTime: match.outbound?.departureTime,
             arrivalDate: match.outbound?.arrivalDate || match.outbound?.departureDate,
             arrivalTime: match.outbound?.arrivalTime,
-            durationMins:
-              match.outbound?.totalDurationMins || (outboundLeg.durationMins ?? 720),
+            durationMins: match.outbound?.totalDurationMins || (outboundLeg.durationMins ?? 720),
             carrier: bizAirline,
             aircraft: bizAircraft,
             seatType: outboundLeg.seatType || 'True 180° Lie-Flat Seat',
-            cabinPhotos: match.cabinPhotos,
           },
         ];
   const outLayovers = match.outbound?.layovers || [];
 
   outLegs.forEach((leg, idx) => {
-    const legDepTime = toAmPm(leg.departureTime || '14:00');
-    const legArrDate = toUkDate(leg.arrivalDate || leg.departureDate);
-    const legArrTime = toAmPm(leg.arrivalTime || '07:00');
+    const legDateShort = toShortDate(leg.departureDate);
+    const legDepTime = toAmPmLower(leg.departureTime || '14:00');
+    const legArrDateShort = toShortDate(leg.arrivalDate || leg.departureDate);
+    const legArrTime = toAmPmLower(leg.arrivalTime || '07:00');
     const legDuration = formatHoursMinutes(leg.durationMins);
     const legSeatType = leg.seatType ? ` (${leg.seatType})` : '';
-    const legPhotosStr = formatLegPhotosMarkdown(leg.cabinPhotos || match.cabinPhotos);
+    const photoUrl = buildGoogleImagesUrl(leg.carrier, leg.aircraft);
 
-    card += `${leg.from} to ${leg.to} @ ${legDepTime} (${legDuration} flight), arriving @ ${legArrDate} @ ${legArrTime} with ${leg.carrier} ${leg.aircraft}${legSeatType}\n`;
-    card += `${legPhotosStr}\n\n`;
+    card += `${legDateShort} @ ${legDepTime}\n`;
+    card += `${leg.from} to ${leg.to} (${legDuration} flight), arriving @ ${legArrDateShort} @ ${legArrTime} with ${leg.carrier} ${leg.aircraft}${legSeatType}\n`;
+    card += `[Photo Link](${photoUrl})\n\n`;
 
     if (idx < outLegs.length - 1) {
       const lay = outLayovers[idx];
@@ -500,7 +430,7 @@ export function formatFlightDealMarkdown(match, index = 1) {
 
   card += `**- Number of nights at ${destination} = ${nightsNum} -**\n\n`;
 
-  // Inbound Business Flight Legs (handles direct as well as 1+ stopovers with individual photos & buffers)
+  // Inbound Business Flight Legs
   const inLegs =
     match.inbound?.legs && match.inbound.legs.length > 0
       ? match.inbound.legs
@@ -512,30 +442,26 @@ export function formatFlightDealMarkdown(match, index = 1) {
             departureTime: match.inbound?.departureTime,
             arrivalDate: match.inbound?.arrivalDate || match.inbound?.departureDate,
             arrivalTime: match.inbound?.arrivalTime,
-            durationMins:
-              match.inbound?.totalDurationMins || (inboundLeg.durationMins ?? 720),
+            durationMins: match.inbound?.totalDurationMins || (inboundLeg.durationMins ?? 720),
             carrier: returnBizAirline,
             aircraft: returnBizAircraft,
             seatType: inboundLeg.seatType || 'True 180° Lie-Flat Seat',
-            cabinPhotos: match.cabinPhotos,
           },
         ];
   const inLayovers = match.inbound?.layovers || [];
 
-  const inFirstLegDepDate = toUkDate(inLegs[0]?.departureDate || match.inbound?.departureDate);
-  const inFirstLegDepTime = toAmPm(inLegs[0]?.departureTime || match.inbound?.departureTime || '14:00');
-  card += `${inFirstLegDepDate} @ ${inFirstLegDepTime}\n`;
-
   inLegs.forEach((leg, idx) => {
-    const legDepTime = toAmPm(leg.departureTime || '14:00');
-    const legArrDate = toUkDate(leg.arrivalDate || leg.departureDate);
-    const legArrTime = toAmPm(leg.arrivalTime || '06:00');
+    const legDateShort = toShortDate(leg.departureDate);
+    const legDepTime = toAmPmLower(leg.departureTime || '14:00');
+    const legArrDateShort = toShortDate(leg.arrivalDate || leg.departureDate);
+    const legArrTime = toAmPmLower(leg.arrivalTime || '06:00');
     const legDuration = formatHoursMinutes(leg.durationMins);
     const legSeatType = leg.seatType ? ` (${leg.seatType})` : '';
-    const legPhotosStr = formatLegPhotosMarkdown(leg.cabinPhotos || match.cabinPhotos);
+    const photoUrl = buildGoogleImagesUrl(leg.carrier, leg.aircraft);
 
-    card += `${leg.from} to ${leg.to} (${legDuration} flight), arriving @ ${legArrDate} @ ${legArrTime} with ${leg.carrier} ${leg.aircraft}${legSeatType}\n`;
-    card += `${legPhotosStr}\n\n`;
+    card += `${legDateShort} @ ${legDepTime}\n`;
+    card += `${leg.from} to ${leg.to} (${legDuration} flight), arriving @ ${legArrDateShort} @ ${legArrTime} with ${leg.carrier} ${leg.aircraft}${legSeatType}\n`;
+    card += `[Photo Link](${photoUrl})\n\n`;
 
     if (idx < inLegs.length - 1) {
       const lay = inLayovers[idx];
@@ -545,34 +471,20 @@ export function formatFlightDealMarkdown(match, index = 1) {
     }
   });
 
-  card += `*${inBufferText}*\n\n`;
-  card += `${hubIata} to LHR arriving ${lhrInArrTime} with ${lhrInAirline} ${lhrInAircraft}\n\n`;
-
-  // Live Booking Deep Links
-  card += `🔗 **Live Booking Links:**\n`;
-  if (match.bookingLinks) {
-    const gf = match.bookingLinks.googleFlights;
-    const sky = match.bookingLinks.skyscannerOtaComparison || match.bookingLinks.skyscanner;
-    const trip = match.bookingLinks.tripCom;
-    const kayak = match.bookingLinks.kayakUk || match.bookingLinks.kayak;
-    const links = [];
-    if (gf) links.push(`[Google Flights (Live OTA)](${gf})`);
-    if (sky) links.push(`[Skyscanner](${sky})`);
-    if (trip) links.push(`[Trip.com UK](${trip})`);
-    if (kayak) links.push(`[Kayak UK](${kayak})`);
-    card += `• **Business Class (${hubIata} ⇄ ${destination}):** ${links.join(' | ')}\n`;
+  if (!isLondonDirect && bestPos) {
+    card += `*${inBufferText}*\n\n`;
+    card += `${hubIata} to ${posDest} with ${lhrInAirline} ${lhrInAircraft} (${lhrInDepTime} to ${lhrInArrTime})\n`;
+    card += `[Photo Link](${buildGoogleImagesUrl(lhrInAirline, lhrInAircraft)})\n\n`;
   }
-  if (bestPos?.bookingLinks) {
-    const gf = bestPos.bookingLinks.googleFlights;
-    const sky = bestPos.bookingLinks.skyscannerOtaComparison || bestPos.bookingLinks.skyscanner;
-    const trip = bestPos.bookingLinks.tripCom;
-    const kayak = bestPos.bookingLinks.kayakUk || bestPos.bookingLinks.kayak;
-    const links = [];
-    if (gf) links.push(`[Google Flights (Live OTA)](${gf})`);
-    if (sky) links.push(`[Skyscanner](${sky})`);
-    if (trip) links.push(`[Trip.com UK](${trip})`);
-    if (kayak) links.push(`[Kayak UK](${kayak})`);
-    card += `• **LHR Positioning (LHR ⇄ ${hubIata}):** ${links.join(' | ')}\n`;
+
+  // Live Booking Deep Links - Google Flights Only
+  card += `🔗 **Live Booking:**\n`;
+  if (match.bookingLinks?.googleFlights) {
+    const bizLabel = isLondonDirect ? `Business Class (${destination})` : `Business Class (${hubIata} ⇄ ${destination})`;
+    card += `• **${bizLabel}:** [Google Flights](${match.bookingLinks.googleFlights})\n`;
+  }
+  if (!isLondonDirect && bestPos?.bookingLinks?.googleFlights) {
+    card += `• **London Positioning (${posOrigin} ⇄ ${hubIata}):** [Google Flights](${bestPos.bookingLinks.googleFlights})\n`;
   }
 
   return card;
